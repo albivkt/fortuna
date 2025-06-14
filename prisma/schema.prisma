@@ -1,0 +1,96 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  plan      String   @default("FREE") // FREE, PRO
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Связанные данные
+  wheels         Wheel[]
+  spins          Spin[]
+  notifications  Notification[]
+
+  @@map("users")
+}
+
+model Wheel {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  segments    Json     // Массив сегментов колеса
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Связи
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  spins       Spin[]
+  drawHistory DrawHistory[]
+
+  @@map("wheels")
+}
+
+model Spin {
+  id        String   @id @default(cuid())
+  result    String   // Результат вращения
+  createdAt DateTime @default(now())
+
+  // Связи
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wheelId   String
+  wheel     Wheel    @relation(fields: [wheelId], references: [id], onDelete: Cascade)
+
+  @@map("spins")
+}
+
+// Новая модель для истории розыгрышей
+model DrawHistory {
+  id          String   @id @default(cuid())
+  prize       String   // Выпавший приз
+  participant String?  // Имя участника (если есть)
+  metadata    Json?    // Дополнительные данные (цвет сегмента, вероятность и т.д.)
+  createdAt   DateTime @default(now())
+
+  // Связи
+  wheelId     String
+  wheel       Wheel    @relation(fields: [wheelId], references: [id], onDelete: Cascade)
+
+  @@map("draw_history")
+}
+
+// Модель для уведомлений
+model Notification {
+  id        String   @id @default(cuid())
+  type      String   // NEW_PARTICIPANT, DRAW_COMPLETED, etc.
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  metadata  Json?    // Дополнительные данные
+  createdAt DateTime @default(now())
+
+  // Связи
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
