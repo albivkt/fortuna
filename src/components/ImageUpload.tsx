@@ -3,7 +3,7 @@
 import { useState, useRef } from 'react';
 
 interface ImageUploadProps {
-  onImageSelect: (file: File) => void;
+  onImageSelect: (imageUrl: string | null) => void;
   currentImage?: string;
   disabled?: boolean;
 }
@@ -11,6 +11,7 @@ interface ImageUploadProps {
 export default function ImageUpload({ onImageSelect, currentImage, disabled = false }: ImageUploadProps) {
   const [dragActive, setDragActive] = useState(false);
   const [preview, setPreview] = useState<string | null>(currentImage || null);
+  const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleDrag = (e: React.DragEvent) => {
@@ -28,7 +29,7 @@ export default function ImageUpload({ onImageSelect, currentImage, disabled = fa
     e.stopPropagation();
     setDragActive(false);
 
-    if (disabled) return;
+    if (disabled || uploading) return;
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       handleFile(e.dataTransfer.files[0]);
@@ -37,14 +38,14 @@ export default function ImageUpload({ onImageSelect, currentImage, disabled = fa
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     e.preventDefault();
-    if (disabled) return;
+    if (disabled || uploading) return;
 
     if (e.target.files && e.target.files[0]) {
       handleFile(e.target.files[0]);
     }
   };
 
-  const handleFile = (file: File) => {
+  const handleFile = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       alert('Пожалуйста, выберите изображение');
       return;
@@ -62,20 +63,53 @@ export default function ImageUpload({ onImageSelect, currentImage, disabled = fa
     };
     reader.readAsDataURL(file);
 
-    onImageSelect(file);
+    // Загружаем в S3
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+
+      const response = await fetch('/api/upload-image', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Ошибка загрузки изображения');
+      }
+
+      console.log('✅ Изображение загружено:', result);
+      console.log('🔗 URL для передачи в callback:', result.url, 'тип:', typeof result.url);
+      onImageSelect(result.url as string);
+      
+    } catch (error) {
+      console.error('❌ Ошибка загрузки изображения:', error);
+      alert('Ошибка загрузки изображения: ' + (error instanceof Error ? error.message : 'Неизвестная ошибка'));
+      
+      // Убираем превью при ошибке
+      setPreview(null);
+      if (inputRef.current) {
+        inputRef.current.value = '';
+      }
+    } finally {
+      setUploading(false);
+    }
   };
 
   const onButtonClick = () => {
-    if (disabled) return;
+    if (disabled || uploading) return;
     inputRef.current?.click();
   };
 
   const removeImage = () => {
-    if (disabled) return;
+    if (disabled || uploading) return;
     setPreview(null);
     if (inputRef.current) {
       inputRef.current.value = '';
     }
+    onImageSelect(null); // Передаем null чтобы корректно очистить изображение
   };
 
   return (
@@ -86,7 +120,7 @@ export default function ImageUpload({ onImageSelect, currentImage, disabled = fa
         accept="image/*"
         onChange={handleChange}
         className="hidden"
-        disabled={disabled}
+        disabled={disabled || uploading}
       />
       
       {preview ? (
@@ -98,7 +132,15 @@ export default function ImageUpload({ onImageSelect, currentImage, disabled = fa
               className="w-full h-full object-cover"
             />
           </div>
-          {!disabled && (
+          {uploading && (
+            <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
+              <div className="text-white text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-2"></div>
+                <p className="text-sm">Загрузка...</p>
+              </div>
+            </div>
+          )}
+          {!disabled && !uploading && (
             <button
               onClick={removeImage}
               className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600 transition-colors"
@@ -110,7 +152,7 @@ export default function ImageUpload({ onImageSelect, currentImage, disabled = fa
       ) : (
         <div
           className={`relative border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-            disabled
+            disabled || uploading
               ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
               : dragActive
               ? 'border-blue-400 bg-blue-50'
@@ -123,24 +165,30 @@ export default function ImageUpload({ onImageSelect, currentImage, disabled = fa
           onClick={onButtonClick}
         >
           <div className="space-y-2">
-            <svg
-              className={`mx-auto h-12 w-12 ${
-                disabled ? 'text-gray-300' : 'text-gray-400'
-              }`}
-              stroke="currentColor"
-              fill="none"
-              viewBox="0 0 48 48"
-            >
-              <path
-                d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            {uploading ? (
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            ) : (
+              <svg
+                className={`mx-auto h-12 w-12 ${
+                  disabled ? 'text-gray-300' : 'text-gray-400'
+                }`}
+                stroke="currentColor"
+                fill="none"
+                viewBox="0 0 48 48"
+              >
+                <path
+                  d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            )}
             <div className="text-sm">
               {disabled ? (
                 <p className="text-gray-400">Доступно в PRO версии</p>
+              ) : uploading ? (
+                <p className="text-blue-600">Загрузка изображения...</p>
               ) : (
                 <>
                   <p className="text-gray-600">

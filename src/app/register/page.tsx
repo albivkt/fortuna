@@ -1,53 +1,95 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation, gql } from '@apollo/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { createNewUser, clearAllUserData } from '@/lib/user';
 import Captcha from '@/components/Captcha';
 import { validateEmail, validatePassword, validateName } from '@/lib/validation';
-
-const REGISTER_MUTATION = gql`
-  mutation Register($input: RegisterInput!) {
-    register(input: $input) {
-      token
-      user {
-        id
-        email
-        name
-      }
-    }
-  }
-`;
+import { createNewUser, clearAllUserData } from '@/lib/user';
+import { useRegister } from '@/lib/graphql/hooks';
 
 export default function RegisterPage() {
   const [formData, setFormData] = useState({
-    email: '',
-    password: '',
     name: '',
+    email: '',
+    password: ''
   });
   const [error, setError] = useState('');
   const [isCaptchaVerified, setIsCaptchaVerified] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const router = useRouter();
 
-  const [register, { loading }] = useMutation(REGISTER_MUTATION, {
-    onCompleted: (data) => {
-      console.log('Registration successful:', data);
-      // Сохраняем токен в localStorage
-      localStorage.setItem('token', data.register.token);
+  const [register, { loading }] = useRegister();
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+    
+    // Очищаем ошибки при изменении полей
+    if (error) setError('');
+    if (validationErrors.length > 0) setValidationErrors([]);
+  };
+
+  const validateForm = () => {
+    const errors: string[] = [];
+    
+    if (!validateName(formData.name)) {
+      errors.push('Имя должно содержать от 2 до 50 символов');
+    }
+    
+    if (!validateEmail(formData.email)) {
+      errors.push('Некорректный email адрес');
+    }
+    
+    if (!validatePassword(formData.password)) {
+      errors.push('Пароль должен содержать минимум 6 символов');
+    }
+    
+    if (!isCaptchaVerified) {
+      errors.push('Пожалуйста, подтвердите, что вы не робот');
+    }
+    
+    setValidationErrors(errors);
+    return errors.length === 0;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!validateForm()) {
+      return;
+    }
+
+    try {
+      // Очищаем все данные предыдущего пользователя
+      clearAllUserData();
       
-      // Создаем и сохраняем данные пользователя с бесплатным планом
-      createNewUser({
-        name: formData.name,
-        email: formData.email
+      const result = await register({
+        variables: {
+          input: {
+            email: formData.email.trim(),
+            password: formData.password,
+            name: formData.name.trim(),
+          }
+        }
       });
-      
-      // Перенаправляем в личный кабинет
-      router.push('/dashboard');
-    },
-    onError: (error) => {
+
+      if (result.data?.register) {
+        console.log('Registration successful:', result.data.register);
+        
+        // Создаем и сохраняем данные пользователя с бесплатным планом
+        createNewUser({
+          name: formData.name.trim(),
+          email: formData.email.trim()
+        });
+        
+        // Перенаправляем в личный кабинет
+        router.push('/dashboard');
+      }
+    } catch (error: any) {
       console.error('Registration error:', error);
       // Обрабатываем различные типы ошибок
       if (error.message.includes('User already exists') || error.message.includes('already registered')) {
@@ -61,187 +103,157 @@ export default function RegisterPage() {
       } else {
         setError('Ошибка регистрации. Попробуйте еще раз');
       }
-    },
-  });
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setValidationErrors([]);
-
-    console.log('Submitting registration with data:', formData);
-
-    // Проверка CAPTCHA
-    if (!isCaptchaVerified) {
-      setError('Пожалуйста, пройдите проверку CAPTCHA');
-      return;
-    }
-
-    // Валидация данных
-    const errors: string[] = [];
-    
-    if (formData.name) {
-      const nameValidation = validateName(formData.name);
-      if (!nameValidation.isValid) {
-        errors.push(...nameValidation.errors);
-      }
-    }
-    
-    const emailValidation = validateEmail(formData.email);
-    if (!emailValidation.isValid) {
-      errors.push(...emailValidation.errors);
-    }
-    
-    const passwordValidation = validatePassword(formData.password);
-    if (!passwordValidation.isValid) {
-      errors.push(...passwordValidation.errors);
-    }
-    
-    if (errors.length > 0) {
-      setValidationErrors(errors);
-      return;
-    }
-
-    // Сохраняем данные регистрации временно
-    localStorage.setItem('temp_registration_data', JSON.stringify({
-      name: formData.name,
-      email: formData.email
-    }));
-
-    try {
-      console.log('Calling register mutation...');
-      await register({
-        variables: {
-          input: formData,
-        },
-      });
-    } catch (err) {
-      console.error('Registration submission error:', err);
-      // Очищаем все данные предыдущего пользователя
-      clearAllUserData();
-      
-      // Создаем нового пользователя локально с бесплатным планом
-      createNewUser({
-        name: formData.name,
-        email: formData.email
-      });
-      router.push('/dashboard');
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+  const handleCaptchaVerify = (isVerified: boolean) => {
+    setIsCaptchaVerified(isVerified);
+    if (isVerified && error) {
+      setError('');
+    }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        {/* Header */}
-        <div className="text-center">
-          <div className="flex justify-center items-center space-x-2 mb-6">
-            <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-500 rounded-xl flex items-center justify-center">
-              <span className="text-white font-bold text-xl">G</span>
-            </div>
-            <span className="text-3xl font-bold text-gray-900">Gifty</span>
-          </div>
-          <h2 className="text-3xl font-bold text-gray-900">Регистрация</h2>
-        </div>
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+      {/* Background Pattern */}
+      <div className="absolute inset-0 opacity-10">
+        <div className="absolute inset-0" style={{
+          backgroundImage: `radial-gradient(circle at 25% 25%, rgba(255,255,255,0.1) 0%, transparent 50%), 
+                           radial-gradient(circle at 75% 75%, rgba(255,255,255,0.05) 0%, transparent 50%)`
+        }}></div>
+      </div>
 
-        {/* Form */}
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div className="space-y-4">
+      {/* Main Card */}
+      <div className="relative z-10 w-full max-w-md">
+        <div className="bg-gray-800/80 backdrop-blur-sm rounded-3xl shadow-2xl border border-gray-700/50 p-8">
+          
+          {/* Header with Icon */}
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 bg-gray-700/50 rounded-full flex items-center justify-center mx-auto mb-6 border border-gray-600/30">
+              <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+              </svg>
+            </div>
+            
+            <h1 className="text-2xl font-bold text-white mb-2">Создать аккаунт</h1>
+            <p className="text-gray-400">Присоединяйтесь к нам сегодня</p>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="space-y-6">
+            
+            {/* Name Field */}
             <div>
+              <label htmlFor="name" className="block text-sm font-medium text-gray-300 mb-2">
+                Имя
+              </label>
               <input
                 id="name"
                 name="name"
                 type="text"
-                placeholder="Имя (необязательно)"
+                autoComplete="name"
+                required
+                placeholder="Введите ваше имя..."
                 value={formData.name}
-                onChange={handleChange}
-                className="appearance-none relative block w-full px-4 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:z-10 text-lg"
+                onChange={handleInputChange}
+                className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600/50 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:border-orange-400/50 transition-all backdrop-blur-sm"
               />
             </div>
+
+            {/* Email Field */}
             <div>
+              <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
+                Email Address
+              </label>
               <input
                 id="email"
                 name="email"
                 type="email"
                 autoComplete="email"
                 required
-                placeholder="Email"
+                placeholder="Введите ваш email..."
                 value={formData.email}
-                onChange={handleChange}
-                className="appearance-none relative block w-full px-4 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:z-10 text-lg"
+                onChange={handleInputChange}
+                className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600/50 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:border-orange-400/50 transition-all backdrop-blur-sm"
               />
             </div>
+
+            {/* Password Field */}
             <div>
+              <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
+                Password
+              </label>
               <input
                 id="password"
                 name="password"
                 type="password"
                 autoComplete="new-password"
                 required
-                placeholder="Пароль (минимум 6 символов)"
+                placeholder="••••••••••"
                 value={formData.password}
-                onChange={handleChange}
-                className="appearance-none relative block w-full px-4 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:z-10 text-lg"
+                onChange={handleInputChange}
+                className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600/50 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:border-orange-400/50 transition-all backdrop-blur-sm"
               />
-              <p className="text-xs text-gray-500 mt-1 px-1">
-                Пароль должен содержать минимум 6 символов
-              </p>
+              <p className="text-xs text-gray-400 mt-1">Минимум 6 символов</p>
             </div>
-          </div>
 
-          {/* CAPTCHA */}
-          <div>
-            <Captcha 
-              onVerify={setIsCaptchaVerified}
-              onReset={() => setIsCaptchaVerified(false)}
-            />
-          </div>
-
-          {error && (
-            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
-              {error}
+            {/* Captcha */}
+            <div className="py-2">
+              <Captcha onVerify={handleCaptchaVerify} />
             </div>
-          )}
 
-          {validationErrors.length > 0 && (
-            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
-              <ul className="list-disc list-inside space-y-1">
-                {validationErrors.map((error, index) => (
-                  <li key={index}>{error}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+            {/* Validation Errors */}
+            {validationErrors.length > 0 && (
+              <div className="bg-red-500/20 border border-red-400/30 rounded-xl p-4 backdrop-blur-sm">
+                <ul className="space-y-1">
+                  {validationErrors.map((error, index) => (
+                    <li key={index} className="text-red-300 text-sm">• {error}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
-          <div>
+            {/* General Error */}
+            {error && (
+              <div className="bg-red-500/20 border border-red-400/30 rounded-xl p-4 backdrop-blur-sm">
+                <p className="text-red-300 text-sm">{error}</p>
+              </div>
+            )}
+
+            {/* Sign Up Button */}
             <button
               type="submit"
               disabled={loading || !isCaptchaVerified}
-              className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-lg font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="w-full bg-gradient-to-r from-orange-400 to-pink-400 text-white py-3 px-4 rounded-xl font-semibold hover:from-orange-500 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-105 shadow-lg btn-glow"
             >
-              {loading && (
-                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-              )}
-              {loading ? 'Регистрация...' : 'Зарегистрироваться'}
+              {loading ? 'Создание аккаунта...' : 'Создать аккаунт'}
             </button>
-          </div>
 
-          <div className="text-center">
-            <span className="text-gray-600">Уже есть аккаунт? </span>
-            <Link href="/login" className="text-blue-600 hover:text-blue-500 font-medium">
-              Войти
-            </Link>
-          </div>
-        </form>
+            {/* Sign In Link */}
+            <div className="text-center pt-4">
+              <span className="text-gray-400 text-sm">Уже есть аккаунт? </span>
+              <Link 
+                href="/login" 
+                className="text-orange-400 hover:text-orange-300 font-semibold transition-colors underline"
+              >
+                Войти
+              </Link>
+            </div>
+          </form>
+        </div>
+
+        {/* Back to Home Link */}
+        <div className="text-center mt-6">
+          <Link 
+            href="/" 
+            className="text-gray-400 hover:text-white transition-colors text-sm flex items-center justify-center space-x-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            <span>Вернуться на главную</span>
+          </Link>
+        </div>
       </div>
     </div>
   );

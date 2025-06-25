@@ -10,16 +10,17 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
-  password  String
+  password  String?
   name      String?
   plan      String   @default("FREE") // FREE, PRO
+  planExpiresAt DateTime? // Дата окончания PRO подписки
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -27,6 +28,7 @@ model User {
   wheels         Wheel[]
   spins          Spin[]
   notifications  Notification[]
+  subscriptions  Subscription[]
 
   @@map("users")
 }
@@ -37,6 +39,10 @@ model Wheel {
   description String?
   segments    Json     // Массив сегментов колеса
   isPublic    Boolean  @default(false)
+  publicSlug  String?  @unique // Уникальная ссылка для публичного доступа
+  allowGuestSpin Boolean @default(false) // Разрешить гостям крутить рулетку
+  customDesign Json?   // Кастомный дизайн для PRO пользователей
+  segmentWeights Json? // Веса сегментов для PRO пользователей
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -52,6 +58,7 @@ model Wheel {
 model Spin {
   id        String   @id @default(cuid())
   result    String   // Результат вращения
+  participant String? // Имя участника
   createdAt DateTime @default(now())
 
   // Связи
@@ -93,4 +100,24 @@ model Notification {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("notifications")
+}
+
+// Модель для подписок
+model Subscription {
+  id        String   @id @default(cuid())
+  plan      String   // PRO
+  status    String   // ACTIVE, EXPIRED, CANCELLED
+  amount    Int      // Сумма в копейках
+  currency  String   @default("RUB")
+  period    String   // MONTHLY, YEARLY
+  startDate DateTime
+  endDate   DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Связи
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
 }

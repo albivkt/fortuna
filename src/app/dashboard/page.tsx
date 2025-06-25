@@ -3,713 +3,745 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { getUserRoulettes, deleteRoulette as deleteRouletteFromStorage, initializeDemoData, type Roulette } from '@/lib/roulettes';
-import { getCurrentUser, updateUser, clearUser, saveUser, getSavedUserPlan, type User } from '@/lib/user';
-import { getUnreadNotifications } from '@/lib/notifications';
-import { DrawHistory } from '@/components/DrawHistory';
-import { NotificationCenter } from '@/components/NotificationCenter';
-import { initializeAllDemoData } from '@/lib/demoData';
+import { useWheels, useDeleteWheel, useGeneratePublicLink, useRemovePublicLink, useMe, usePlanLimits } from '@/lib/graphql/hooks';
+import { useQuery, useLazyQuery, useMutation } from '@apollo/client';
+import { gql } from '@apollo/client';
+import { GET_WHEEL, GENERATE_PUBLIC_LINK, REMOVE_PUBLIC_LINK } from '@/lib/graphql/queries';
+import { getNotifications, markNotificationAsRead } from '@/lib/notifications';
+import { getCurrentUser, clearAllUserData } from '@/lib/user';
+import { type DrawHistory, type Notification } from '@/types';
+import { formatDateSafely } from '@/lib/dateUtils';
+
+
+
+// Генерация session ID для временных пользователей
+const getOrCreateSessionId = () => {
+  let sessionId = localStorage.getItem('gifty_session_id');
+  if (!sessionId) {
+    sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    localStorage.setItem('gifty_session_id', sessionId);
+  }
+  return sessionId;
+};
+
+// Интерфейс для пользователя дашборда
+interface DashboardUser {
+  id: string;
+  name: string;
+  email: string;
+  plan: 'free' | 'pro';
+}
 
 export default function DashboardPage() {
-  const [user, setUser] = useState<User | null>(null);
-  const [roulettes, setRoulettes] = useState<Roulette[]>([]);
-  const [activeTab, setActiveTab] = useState<'roulettes' | 'profile' | 'subscription'>('roulettes');
-  const [profileForm, setProfileForm] = useState({ name: '', email: '' });
-  const [showDrawHistory, setShowDrawHistory] = useState<{ wheelId: string; wheelTitle: string } | null>(null);
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
   const router = useRouter();
+  
+  // GraphQL запросы
+  const { data: wheelsData, loading: wheelsLoading, error: wheelsError, refetch } = useWheels();
+  const [deleteWheel] = useDeleteWheel();
+  const [generatePublicLink] = useGeneratePublicLink();
+  const [removePublicLink] = useRemovePublicLink();
+  
+  // Получаем информацию о пользователе через GraphQL
+  const { data: meData, loading: meLoading, error: meError, refetch: refetchMe } = useMe();
+  const { data: planData, loading: planLoading, refetch: refetchPlan } = usePlanLimits();
+  
 
-  // Функция для обновления списка рулеток
-  const refreshRoulettes = () => {
-    if (user) {
-      const userRoulettes = getUserRoulettes(user.id);
-      setRoulettes(userRoulettes);
-    }
-  };
+
+  const [user, setUser] = useState<DashboardUser | null>(null);
+  const [showDrawHistory, setShowDrawHistory] = useState<{ wheelId: string; wheelTitle: string } | null>(null);
+  const [drawHistory, setDrawHistory] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+
+  const [getWheelHistory, { loading: historyLoading }] = useLazyQuery(GET_WHEEL, {
+    onCompleted: (data) => {
+      if (data?.wheel?.spins) {
+        setDrawHistory(data.wheel.spins);
+      }
+    },
+    onError: (error) => {
+      console.error('❌ Error loading wheel history:', error);
+      alert('Ошибка при загрузке истории вращений');
+    },
+  });
 
   useEffect(() => {
-    // Проверяем авторизацию
-    const token = localStorage.getItem('token');
-    if (!token) {
-      router.push('/login');
-      return;
-    }
-
-    // Загружаем данные пользователя
-    const userData = getCurrentUser();
-    if (userData) {
-      setUser(userData);
-      setProfileForm({ name: userData.name, email: userData.email });
-    } else {
-      // Если нет данных пользователя, создаем временные с данными из формы регистрации
-      const savedRegData = localStorage.getItem('temp_registration_data');
-      const savedPlan = getSavedUserPlan(); // Получаем сохраненный план
-      let tempUser: User;
+    // Если пользователь авторизован через GraphQL
+    if (meData?.me) {
+      const authenticatedUser = meData.me;
+      // Приоритет: planData.me.plan > meData.me.plan > 'free'
+      const userPlan = (planData?.me?.plan || authenticatedUser.plan)?.toLowerCase() || 'free';
       
-      if (savedRegData) {
-        const regData = JSON.parse(savedRegData);
-        tempUser = {
-          id: '1',
-          name: regData.name || 'Пользователь',
-          email: regData.email || 'user@example.com',
-          plan: savedPlan, // Используем сохраненный план
-          createdAt: new Date().toISOString()
+      const dashboardUser: DashboardUser = {
+        id: authenticatedUser.id,
+        name: authenticatedUser.name || 'Пользователь',
+        email: authenticatedUser.email,
+        plan: userPlan as 'free' | 'pro'
+      };
+      setUser(dashboardUser);
+      
+      // Загружаем уведомления для авторизованного пользователя
+      const userNotifications = getNotifications(authenticatedUser.id);
+      setNotifications(userNotifications);
+      
+      console.log('👤 Authenticated user:', dashboardUser);
+      console.log('📋 User plan from meData:', authenticatedUser.plan);
+      console.log('📋 User plan from planData:', planData?.me?.plan);
+      console.log('📋 Final user plan:', userPlan);
+    } else if (!meLoading && !meData?.me) {
+      // Если пользователь не авторизован, создаем временного пользователя
+      const sessionId = getOrCreateSessionId();
+      if (sessionId) {
+        // Пытаемся получить данные пользователя из localStorage
+        const localUser = getCurrentUser();
+        
+        const dashboardUser: DashboardUser = {
+          id: sessionId,
+          name: localUser?.name || 'Гость', // Используем имя из localStorage или "Гость" как fallback
+          email: localUser?.email || `temp_${sessionId}@gifty.local`,
+          plan: 'free' // Неавторизованные пользователи всегда имеют free план
         };
-        // Сохраняем как постоянные данные пользователя
-        saveUser(tempUser);
-        // Удаляем временные данные
-        localStorage.removeItem('temp_registration_data');
-      } else {
-        tempUser = {
-          id: '1',
-          name: 'Пользователь',
-          email: 'user@example.com',
-          plan: savedPlan, // Используем сохраненный план
-          createdAt: new Date().toISOString()
-        };
-        saveUser(tempUser); // Сохраняем пользователя
+        setUser(dashboardUser);
+        
+        // Загружаем уведомления для временного пользователя
+        const userNotifications = getNotifications(sessionId);
+        setNotifications(userNotifications);
+        
+        console.log('👤 Guest user created:', dashboardUser);
+        console.log('📋 Local user data:', localUser);
       }
-      setUser(tempUser);
-      setProfileForm({ name: tempUser.name, email: tempUser.email });
     }
+  }, [meData, meLoading, planData]);
 
-    // Инициализируем демо-данные если их нет
-    const currentUserId = userData?.id || '1';
-    initializeDemoData(currentUserId);
-    initializeAllDemoData(currentUserId);
+  // Обновляем данные пользователя при монтировании компонента
+  useEffect(() => {
+    console.log('🔄 Dashboard mounted, refreshing user data');
+    if (!meLoading && !planLoading) {
+      Promise.all([refetchMe(), refetchPlan()]);
+    }
+  }, []); // Выполняется только при монтировании
 
-    // Загружаем рулетки пользователя
-    const userRoulettes = getUserRoulettes(currentUserId);
-    setRoulettes(userRoulettes);
-
-    // Загружаем количество непрочитанных уведомлений
-    const unread = getUnreadNotifications(currentUserId);
-    setUnreadCount(unread.length);
-  }, [router]);
-
-  // Обновляем список рулеток при фокусе на странице
+  // Обновляем данные пользователя при фокусе на странице (например, после возвращения со страницы подписки)
   useEffect(() => {
     const handleFocus = () => {
-      refreshRoulettes();
+      console.log('🔄 Refreshing user data on page focus');
+      Promise.all([refetchMe(), refetchPlan()]);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('🔄 Refreshing user data on visibility change');
+        Promise.all([refetchMe(), refetchPlan()]);
+      }
     };
 
     window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, [user]);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [refetchMe, refetchPlan]);
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    clearUser();
-    router.push('/');
+  // Дополнительный эффект для принудительного обновления при изменении данных пользователя
+  useEffect(() => {
+    if (meData?.me) {
+      console.log('🔄 User data changed, updating local state');
+      const authenticatedUser = meData.me;
+      // Приоритет: planData.me.plan > meData.me.plan > 'free'
+      const userPlan = (planData?.me?.plan || authenticatedUser.plan)?.toLowerCase() || 'free';
+      
+      setUser(prev => {
+        const newUser = {
+          id: authenticatedUser.id,
+          name: authenticatedUser.name || 'Пользователь',
+          email: authenticatedUser.email,
+          plan: userPlan as 'free' | 'pro'
+        };
+        
+        // Проверяем, изменился ли план
+        if (prev?.plan !== newUser.plan) {
+          console.log('📋 Plan changed from', prev?.plan, 'to', newUser.plan);
+        }
+        
+        return newUser;
+      });
+    }
+  }, [meData, planData]);
+
+  // Закрытие модального окна по Escape
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && showDrawHistory) {
+        setShowDrawHistory(null);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [showDrawHistory]);
+
+  const wheels = wheelsData?.wheels || [];
+
+  const handleOpenRoulette = (id: string) => {
+    router.push(`/roulette/${id}`);
   };
 
-  const handleOpenRoulette = (rouletteId: string) => {
-    // Открываем рулетку для просмотра/игры
-    router.push(`/roulette/${rouletteId}`);
+  const handleEditRoulette = (id: string) => {
+    router.push(`/dashboard/edit/${id}`);
   };
 
-  const handleEditRoulette = (rouletteId: string) => {
-    // Переходим к редактированию рулетки
-    router.push(`/dashboard/edit/${rouletteId}`);
-  };
-
-  const handleDeleteRoulette = (rouletteId: string) => {
-    if (confirm('Вы уверены, что хотите удалить эту рулетку?')) {
-      // Удаляем рулетку из localStorage
-      const success = deleteRouletteFromStorage(rouletteId);
-      if (success) {
+  const handleDeleteRoulette = async (id: string, title: string) => {
+    if (confirm(`Вы уверены, что хотите удалить рулетку "${title}"?`)) {
+      try {
+        await deleteWheel({
+          variables: { id }
+        });
         // Обновляем список рулеток
-        setRoulettes(roulettes.filter(r => r.id !== rouletteId));
-      } else {
+        refetch();
+      } catch (error) {
+        console.error('Ошибка при удалении рулетки:', error);
         alert('Ошибка при удалении рулетки');
       }
     }
   };
 
-  const handleShareRoulette = (rouletteId: string) => {
-    // Копируем ссылку в буфер обмена
-    const shareUrl = `${window.location.origin}/roulette/${rouletteId}`;
-    navigator.clipboard.writeText(shareUrl).then(() => {
-      alert('Ссылка скопирована в буфер обмена!');
+  const handleShowDrawHistory = (wheelId: string, wheelTitle: string) => {
+    setShowDrawHistory({ wheelId, wheelTitle });
+    getWheelHistory({
+      variables: { id: wheelId }
+    });
+  };
+
+  const handleMarkNotificationAsRead = (notificationId: string) => {
+    markNotificationAsRead(notificationId);
+    if (user) {
+      const updatedNotifications = getNotifications(user.id);
+      setNotifications(updatedNotifications);
+    }
+  };
+
+  const handleGeneratePublicLink = async (wheelId: string) => {
+    try {
+      await generatePublicLink({
+        variables: {
+          input: { wheelId }
+        }
+      });
+    } catch (error) {
+      console.error('Error generating public link:', error);
+    }
+  };
+
+  const handleRemovePublicLink = async (wheelId: string) => {
+    if (confirm('Вы уверены, что хотите удалить публичную ссылку? Гости больше не смогут получить доступ к рулетке.')) {
+      try {
+        await removePublicLink({
+          variables: { wheelId }
+        });
+      } catch (error) {
+        console.error('Error removing public link:', error);
+      }
+    }
+  };
+
+  const handleCopyPublicLink = (slug: string) => {
+    const publicUrl = `${window.location.origin}/public/${slug}`;
+    navigator.clipboard.writeText(publicUrl).then(() => {
+      alert('Публичная ссылка скопирована в буфер обмена!');
     }).catch(() => {
-      // Fallback для старых браузеров
-      prompt('Скопируйте эту ссылку:', shareUrl);
+      prompt('Скопируйте эту публичную ссылку:', publicUrl);
     });
   };
 
-  const handleUpdateProfile = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-
-    if (!profileForm.name.trim() || !profileForm.email.trim()) {
-      alert('Пожалуйста, заполните все поля');
-      return;
-    }
-
-    const updatedUser = updateUser({ name: profileForm.name, email: profileForm.email });
-    if (updatedUser) {
-      setUser(updatedUser);
-      alert('Профиль успешно обновлен!');
-    } else {
-      alert('Ошибка при обновлении профиля');
+  const handleSwitchAccount = () => {
+    if (confirm('Вы уверены, что хотите сменить аккаунт? Все несохраненные данные будут потеряны.')) {
+      clearAllUserData();
+      window.location.href = '/login';
     }
   };
 
-  const handleProfileFormChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setProfileForm({
-      ...profileForm,
-      [e.target.name]: e.target.value
-    });
+  const handleRefreshUserData = async () => {
+    console.log('🔄 Manually refreshing user data');
+    try {
+      await Promise.all([refetchMe(), refetchPlan()]);
+      alert('Данные пользователя обновлены!');
+    } catch (error) {
+      console.error('Error refreshing user data:', error);
+      alert('Ошибка при обновлении данных');
+    }
   };
 
-  const handleChangePassword = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const currentPassword = formData.get('currentPassword') as string;
-    const newPassword = formData.get('newPassword') as string;
-    const confirmPassword = formData.get('confirmPassword') as string;
-
-    if (!currentPassword || !newPassword || !confirmPassword) {
-      alert('Пожалуйста, заполните все поля');
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      alert('Новые пароли не совпадают');
-      return;
-    }
-
-    if (newPassword.length < 6) {
-      alert('Пароль должен содержать минимум 6 символов');
-      return;
-    }
-
-    // Здесь будет логика смены пароля через API
-    alert('Пароль успешно изменен!');
-    e.currentTarget.reset();
-  };
+  const unreadNotificationsCount = notifications.filter(n => !n.isRead).length;
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Загрузка...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-400 mx-auto mb-4"></div>
+          <p className="text-gray-300">Загрузка...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <Link href="/" className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center">
-                <span className="text-white font-bold text-sm">G</span>
-              </div>
-              <span className="text-2xl font-bold text-gray-900">GIFTY</span>
-            </Link>
-            <div className="flex items-center space-x-4">
-              <span className="text-gray-600">Привет, {user.name}!</span>
-              
-              {/* Кнопка уведомлений */}
-              <button
-                onClick={() => setShowNotifications(true)}
-                className="relative text-gray-600 hover:text-gray-900 p-2 rounded-lg transition-colors"
-                title="Уведомления"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-5 5v-5zM9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                {unreadCount > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </span>
-                )}
-              </button>
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
+      {/* Background Pattern */}
+      <div className="absolute inset-0 opacity-10">
+        <div className="absolute inset-0" style={{
+          backgroundImage: `radial-gradient(circle at 25% 25%, rgba(255,255,255,0.1) 0%, transparent 50%), 
+                           radial-gradient(circle at 75% 75%, rgba(255,255,255,0.05) 0%, transparent 50%)`
+        }}></div>
+      </div>
 
-              <button
-                onClick={handleLogout}
-                className="text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg transition-colors"
-              >
-                Выйти
-              </button>
+      {/* Header */}
+      <header className="relative z-10 bg-gray-800/50 backdrop-blur-sm border-b border-gray-700/50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 bg-gradient-to-r from-orange-400 to-pink-400 rounded-full flex items-center justify-center shadow-lg">
+                <span className="text-white font-bold text-lg">G</span>
+              </div>
+              <Link href="/" className="text-2xl font-bold text-white">
+                GIFTY
+              </Link>
+              <span className="text-sm text-gray-400 hidden sm:block">панель управления</span>
+            </div>
+            <div className="flex items-center space-x-4">
+              {/* Notifications */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowNotifications(!showNotifications)}
+                  className="relative p-2 text-gray-300 hover:text-white transition-colors rounded-lg hover:bg-gray-700/50"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-5 5v-5zM11 19H6.5A2.5 2.5 0 014 16.5v-9A2.5 2.5 0 016.5 5h11A2.5 2.5 0 0120 7.5v3.5" />
+                  </svg>
+                  {unreadNotificationsCount > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                      {unreadNotificationsCount}
+                    </span>
+                  )}
+                </button>
+
+                {showNotifications && (
+                  <div className="absolute right-0 mt-2 w-80 bg-gray-800/90 backdrop-blur-sm rounded-xl shadow-2xl border border-gray-700/50 z-50">
+                    <div className="p-4 border-b border-gray-700/50">
+                      <h3 className="font-semibold text-white">Уведомления</h3>
+                    </div>
+                    <div className="max-h-96 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <div className="p-4 text-center text-gray-400">
+                          Нет уведомлений
+                        </div>
+                      ) : (
+                        notifications.map((notification) => (
+                          <div
+                            key={notification.id}
+                            className={`p-4 border-b border-gray-700/30 hover:bg-gray-700/30 cursor-pointer transition-colors ${
+                              !notification.isRead ? 'bg-orange-500/10' : ''
+                            }`}
+                            onClick={() => handleMarkNotificationAsRead(notification.id)}
+                          >
+                            <div className="flex items-start space-x-3">
+                              <div className="text-2xl">🔔</div>
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-white">
+                                  {notification.title}
+                                </p>
+                                <p className="text-sm text-gray-300 mt-1">
+                                  {notification.message}
+                                </p>
+                                <p className="text-xs text-gray-400 mt-2">
+                                  {new Date(notification.createdAt).toLocaleString('ru-RU')}
+                                </p>
+                              </div>
+                              {!notification.isRead && (
+                                <div className="w-2 h-2 bg-orange-400 rounded-full"></div>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <div className="text-sm text-gray-300 flex items-center space-x-2">
+                  <div>
+                  План: <span className="font-semibold text-white">{user.plan === 'pro' ? 'PRO' : 'Бесплатный'}</span>
+                  </div>
+                  <button
+                    onClick={handleRefreshUserData}
+                    className="p-1 text-gray-400 hover:text-white transition-colors rounded"
+                    title="Обновить данные пользователя"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                </div>
+                {user.plan !== 'pro' && (
+                  <Link
+                    href="/pricing"
+                    className="bg-gradient-to-r from-yellow-400 to-orange-400 text-gray-900 px-4 py-2 rounded-lg hover:from-yellow-500 hover:to-orange-500 transition-all font-medium shadow-lg"
+                  >
+                    Обновить до PRO
+                  </Link>
+                )}
+                <button
+                  onClick={handleSwitchAccount}
+                  className="bg-gray-700/50 border border-gray-600/50 text-gray-300 px-3 py-2 rounded-lg hover:bg-gray-600/50 hover:text-white transition-all font-medium backdrop-blur-sm"
+                  title="Сменить аккаунт"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid lg:grid-cols-4 gap-8">
-          {/* Sidebar */}
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-6">Личный кабинет</h2>
-              <nav className="space-y-2">
-                <button
-                  onClick={() => setActiveTab('roulettes')}
-                  className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
-                    activeTab === 'roulettes'
-                      ? 'bg-blue-100 text-blue-700 font-medium'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  Мои рулетки
-                </button>
-                <button
-                  onClick={() => setActiveTab('profile')}
-                  className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
-                    activeTab === 'profile'
-                      ? 'bg-blue-100 text-blue-700 font-medium'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  Настройки профиля
-                </button>
-                <button
-                  onClick={() => setActiveTab('subscription')}
-                  className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
-                    activeTab === 'subscription'
-                      ? 'bg-blue-100 text-blue-700 font-medium'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  Подписка
-                </button>
-              </nav>
+      <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Welcome Section */}
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold text-white mb-2">
+            Добро пожаловать, {user.name}!
+          </h1>
+          <p className="text-gray-300 text-lg">
+            Управляйте своими рулетками и создавайте новые
+          </p>
+        </div>
+
+        {/* Stats Cards */}
+        <div className="grid md:grid-cols-3 gap-6 mb-8">
+          <div className="bg-gray-800/60 backdrop-blur-sm p-6 rounded-xl shadow-xl border border-gray-700/50">
+            <div className="flex items-center">
+              <div className="w-12 h-12 bg-blue-500/20 rounded-lg flex items-center justify-center border border-blue-400/30">
+                <svg className="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-400">Всего рулеток</p>
+                <p className="text-2xl font-bold text-white">{wheels.length}</p>
+              </div>
             </div>
           </div>
 
-          {/* Main Content */}
-          <div className="lg:col-span-3">
-            {activeTab === 'roulettes' && (
-              <div className="space-y-6">
-                {/* Header with Create Button */}
-                <div className="flex justify-between items-center">
-                  <h1 className="text-3xl font-bold text-gray-900">Мои рулетки</h1>
-                  {user.plan === 'free' && roulettes.length >= 3 ? (
-                    <div className="text-center">
-                      <button
-                        disabled
-                        className="bg-gray-300 text-gray-500 px-6 py-3 rounded-lg cursor-not-allowed font-medium mb-2"
-                      >
-                        + Создать рулетку
-                      </button>
-                      <p className="text-sm text-red-600">
-                        Достигнут лимит бесплатного плана (3/3)
-                      </p>
-                      <Link 
-                        href="/dashboard/subscription"
-                        className="text-sm text-purple-600 hover:text-purple-700 font-medium"
-                      >
-                        Обновить до PRO
-                      </Link>
-                    </div>
-                  ) : (
-                    <Link
-                      href="/dashboard/create"
-                      className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
-                    >
-                      + Создать рулетку
-                    </Link>
-                  )}
-                </div>
+          <div className="bg-gray-800/60 backdrop-blur-sm p-6 rounded-xl shadow-xl border border-gray-700/50">
+            <div className="flex items-center">
+              <div className="w-12 h-12 bg-green-500/20 rounded-lg flex items-center justify-center border border-green-400/30">
+                <svg className="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-400">Публичных</p>
+                <p className="text-2xl font-bold text-white">
+                  {wheels.filter(w => w.isPublic).length}
+                </p>
+              </div>
+            </div>
+          </div>
 
-                {/* Plan Info */}
-                <div className="bg-white rounded-xl shadow-sm p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        Тарифный план: {user.plan === 'free' ? 'Бесплатный' : 'PRO'}
+          <div className="bg-gray-800/60 backdrop-blur-sm p-6 rounded-xl shadow-xl border border-gray-700/50">
+            <div className="flex items-center">
+              <div className="w-12 h-12 bg-purple-500/20 rounded-lg flex items-center justify-center border border-purple-400/30">
+                <svg className="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-400">Всего вращений</p>
+                <p className="text-2xl font-bold text-white">
+                  {wheels.reduce((total, wheel) => total + wheel.spins.length, 0)}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-col sm:flex-row gap-4 mb-8">
+          <Link
+            href="/dashboard/create"
+            className="bg-gradient-to-r from-orange-400 to-pink-400 text-white px-6 py-3 rounded-xl hover:from-orange-500 hover:to-pink-500 transition-all font-medium text-center shadow-lg transform hover:scale-105"
+          >
+            Создать новую рулетку
+          </Link>
+          <Link 
+            href="/"
+            className="bg-gray-700/50 border border-gray-600/50 text-gray-300 px-6 py-3 rounded-xl hover:bg-gray-600/50 hover:text-white transition-all font-medium text-center backdrop-blur-sm"
+          >
+            Посмотреть публичные рулетки
+          </Link>
+        </div>
+
+        {/* Roulettes List */}
+        <div className="bg-gray-800/60 backdrop-blur-sm rounded-xl shadow-xl border border-gray-700/50">
+          <div className="p-6 border-b border-gray-700/50">
+            <h2 className="text-xl font-semibold text-white">Мои рулетки</h2>
+          </div>
+          
+          {wheelsLoading ? (
+            <div className="p-8 text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-400 mx-auto mb-4"></div>
+              <p className="text-gray-300">Загрузка рулеток...</p>
+            </div>
+          ) : wheelsError ? (
+            <div className="p-8 text-center">
+              <p className="text-red-400">Ошибка загрузки рулеток</p>
+            </div>
+          ) : wheels.length === 0 ? (
+            <div className="p-8 text-center">
+              <div className="w-16 h-16 bg-gray-700/50 rounded-full flex items-center justify-center mx-auto mb-4 border border-gray-600/30">
+                <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-medium text-white mb-2">Нет рулеток</h3>
+              <p className="text-gray-400 mb-4">Создайте свою первую рулетку, чтобы начать</p>
+              <Link
+                href="/dashboard/create"
+                className="bg-gradient-to-r from-orange-400 to-pink-400 text-white px-6 py-3 rounded-xl hover:from-orange-500 hover:to-pink-500 transition-all font-medium shadow-lg inline-block"
+              >
+                Создать рулетку
+              </Link>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-700/30">
+              {wheels.map((wheel, index) => (
+                <div key={wheel.id} className="p-6 hover:bg-gray-700/20 transition-colors">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <h3 className="text-lg font-semibold text-white mb-2">
+                        {wheel.title}
                       </h3>
-                      <p className="text-gray-600">
-                        {user.plan === 'free' 
-                          ? `Использовано: ${roulettes.length}/3 рулеток`
-                          : 'Безлимитное количество рулеток'
-                        }
-                      </p>
-                    </div>
-                    {user.plan === 'free' && (
-                      <Link 
-                        href="/dashboard/subscription"
-                        className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors inline-block"
-                      >
-                        Обновить до PRO
-                      </Link>
-                    )}
-                  </div>
-                </div>
-
-                {/* Roulettes Grid */}
-                <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {roulettes.map((roulette) => (
-                    <div key={roulette.id} className="bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition-shadow">
-                      <div className="flex justify-between items-start mb-4">
-                        <h3 className="text-lg font-semibold text-gray-900 truncate">{roulette.name}</h3>
-                        <div className="flex space-x-2">
-                          <button 
-                            onClick={() => handleEditRoulette(roulette.id)}
-                            className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100 transition-colors"
-                            title="Редактировать"
-                          >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                            </svg>
-                          </button>
-                          <button 
-                            onClick={() => handleDeleteRoulette(roulette.id)}
-                            className="text-gray-400 hover:text-red-600 p-1 rounded hover:bg-red-50 transition-colors"
-                            title="Удалить"
-                          >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
-                      <div className="space-y-2 text-sm text-gray-600">
-                        <p>Сегментов: {roulette.segments.length}</p>
-                        <p>Создана: {new Date(roulette.createdAt).toLocaleDateString('ru-RU')}</p>
-                        <p>Статус: {roulette.isPublic ? 'Публичная' : 'Приватная'}</p>
-                        {user.plan === 'pro' && roulette.stats && (
-                          <p>Розыгрышей: {roulette.stats.totalSpins}</p>
+                      {wheel.description && (
+                        <p className="text-gray-300 mb-3">{wheel.description}</p>
+                      )}
+                      
+                      <div className="space-y-2 text-sm text-gray-400">
+                        <p>Сегментов: {wheel.segments.length}</p>
+                        <p>Создана: {formatDateSafely(wheel.createdAt)}</p>
+                        <p>Статус: {wheel.isPublic ? 'Публичная' : 'Приватная'}</p>
+                        <p>Вращений: {wheel.spins.length}</p>
+                        {wheel.publicSlug && (
+                          <p className="text-green-400 font-medium">
+                            🔗 Публичная ссылка: активна
+                          </p>
                         )}
                       </div>
+                      
                       <div className="mt-4 space-y-2">
-                        <div className="flex space-x-2">
+                        <div className="grid grid-cols-2 gap-2">
                           <button 
-                            onClick={() => handleOpenRoulette(roulette.id)}
-                            className="flex-1 bg-blue-100 text-blue-700 px-4 py-2 rounded-lg hover:bg-blue-200 transition-colors text-sm font-medium"
+                            onClick={() => handleOpenRoulette(wheel.id)}
+                            className="bg-blue-500/20 text-blue-400 border border-blue-400/30 px-4 py-2 rounded-lg hover:bg-blue-500/30 transition-all text-sm font-medium backdrop-blur-sm"
                           >
                             Открыть
                           </button>
-                          <button 
-                            onClick={() => handleShareRoulette(roulette.id)}
-                            className="flex-1 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
-                          >
-                            Поделиться
-                          </button>
-                        </div>
-                        
-                        {/* Кнопка истории розыгрышей */}
-                        <button
-                          onClick={() => setShowDrawHistory({ wheelId: roulette.id, wheelTitle: roulette.name })}
-                          className="w-full bg-green-100 text-green-700 px-4 py-2 rounded-lg hover:bg-green-200 transition-colors text-sm font-medium"
-                        >
-                          📜 История розыгрышей
-                        </button>
-
-                        {user.plan === 'pro' && (
-                          <Link
-                            href={`/dashboard/stats/${roulette.id}`}
-                            className="w-full bg-purple-100 text-purple-700 px-4 py-2 rounded-lg hover:bg-purple-200 transition-colors text-sm font-medium text-center block"
-                          >
-                            📊 Статистика
-                          </Link>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-
-                  {/* Empty State */}
-                  {roulettes.length === 0 && (
-                    <div className="col-span-full text-center py-12">
-                      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                        </svg>
-                      </div>
-                      <h3 className="text-lg font-medium text-gray-900 mb-2">Пока нет рулеток</h3>
-                      <p className="text-gray-600 mb-4">Создайте свою первую рулетку прямо сейчас!</p>
-                      {user.plan === 'free' && roulettes.length >= 3 ? (
-                        <div className="text-center">
                           <button
-                            disabled
-                            className="bg-gray-300 text-gray-500 px-6 py-3 rounded-lg cursor-not-allowed font-medium mb-2"
+                            onClick={() => handleShowDrawHistory(wheel.id, wheel.title)}
+                            className="bg-green-500/20 text-green-400 border border-green-400/30 px-4 py-2 rounded-lg hover:bg-green-500/30 transition-all text-sm font-medium backdrop-blur-sm"
                           >
-                            Создать рулетку
+                            📜 История
                           </button>
-                          <p className="text-sm text-red-600 mb-2">
-                            Достигнут лимит бесплатного плана
-                          </p>
-                          <Link 
-                            href="/dashboard/subscription"
-                            className="text-sm text-purple-600 hover:text-purple-700 font-medium"
-                          >
-                            Обновить до PRO
-                          </Link>
                         </div>
-                      ) : (
-                        <Link
-                          href="/dashboard/create"
-                          className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium inline-block"
-                        >
-                          Создать рулетку
-                        </Link>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
 
-            {activeTab === 'profile' && (
-              <div className="space-y-6">
-                <h1 className="text-3xl font-bold text-gray-900">Настройки профиля</h1>
-                
-                <div className="bg-white rounded-xl shadow-sm p-6">
-                  <h2 className="text-xl font-semibold text-gray-900 mb-6">Личная информация</h2>
-                  <form className="space-y-4" onSubmit={handleUpdateProfile}>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Имя</label>
-                      <input
-                        type="text"
-                        name="name"
-                        value={profileForm.name}
-                        onChange={handleProfileFormChange}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-                      <input
-                        type="email"
-                        name="email"
-                        value={profileForm.email}
-                        onChange={handleProfileFormChange}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
-                        required
-                      />
-                    </div>
+                        {/* Публичная ссылка */}
+                        {wheel.publicSlug ? (
+                          <div className="space-y-2">
+                            <button
+                              onClick={() => handleCopyPublicLink(wheel.publicSlug!)}
+                              className="w-full bg-blue-500/20 text-blue-400 border border-blue-400/30 px-4 py-2 rounded-lg hover:bg-blue-500/30 transition-all text-sm font-medium backdrop-blur-sm"
+                            >
+                              🔗 Скопировать публичную ссылку
+                            </button>
+                            <button
+                              onClick={() => handleRemovePublicLink(wheel.id)}
+                              className="w-full bg-orange-500/20 text-orange-400 border border-orange-400/30 px-4 py-2 rounded-lg hover:bg-orange-500/30 transition-all text-sm font-medium backdrop-blur-sm"
+                            >
+                              🗑️ Удалить публичную ссылку
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleGeneratePublicLink(wheel.id)}
+                            className="w-full bg-purple-500/20 text-purple-400 border border-purple-400/30 px-4 py-2 rounded-lg hover:bg-purple-500/30 transition-all text-sm font-medium backdrop-blur-sm"
+                          >
+                            🌐 Создать публичную ссылку
+                          </button>
+                        )}
 
-                    <button
-                      type="submit"
-                      className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
-                    >
-                      Сохранить изменения
-                    </button>
-                  </form>
-                </div>
-
-                <div className="bg-white rounded-xl shadow-sm p-6">
-                  <h2 className="text-xl font-semibold text-gray-900 mb-6">Смена пароля</h2>
-                  <form className="space-y-4" onSubmit={handleChangePassword}>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Текущий пароль</label>
-                      <input
-                        type="password"
-                        name="currentPassword"
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Новый пароль</label>
-                      <input
-                        type="password"
-                        name="newPassword"
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
-                        required
-                        minLength={6}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Подтвердите новый пароль</label>
-                      <input
-                        type="password"
-                        name="confirmPassword"
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
-                        required
-                        minLength={6}
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
-                    >
-                      Изменить пароль
-                    </button>
-                  </form>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'subscription' && (
-              <div className="space-y-6">
-                <h1 className="text-3xl font-bold text-gray-900">Управление подпиской</h1>
-                
-                {/* Current Plan Status */}
-                <div className="bg-white rounded-xl shadow-sm p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                        Текущий план: {user.plan === 'free' ? 'Бесплатный' : 'PRO'}
-                      </h3>
-                      <p className="text-gray-600">
-                        {user.plan === 'free' 
-                          ? 'Базовая функциональность с ограничениями'
-                          : 'Полный доступ ко всем функциям'
-                        }
-                      </p>
-                    </div>
-                    <div className={`px-4 py-2 rounded-full text-sm font-medium ${
-                      user.plan === 'pro' 
-                        ? 'bg-purple-100 text-purple-700' 
-                        : 'bg-gray-100 text-gray-700'
-                    }`}>
-                      {user.plan === 'free' ? 'FREE' : 'PRO'}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Plan Comparison */}
-                <div className="grid md:grid-cols-2 gap-6">
-                  {/* Free Plan Features */}
-                  <div className="bg-white rounded-xl shadow-sm p-6">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Бесплатный план</h3>
-                    <ul className="space-y-3">
-                      <li className="flex items-center">
-                        <svg className="w-5 h-5 text-green-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-gray-700">До 3 рулеток</span>
-                      </li>
-                      <li className="flex items-center">
-                        <svg className="w-5 h-5 text-green-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-gray-700">До 6 сегментов</span>
-                      </li>
-                      <li className="flex items-center">
-                        <svg className="w-5 h-5 text-green-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-gray-700">Базовые настройки</span>
-                      </li>
-                    </ul>
-                  </div>
-
-                  {/* PRO Plan Features */}
-                  <div className="bg-white rounded-xl shadow-sm p-6 border-2 border-purple-200">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-semibold text-gray-900">PRO план</h3>
-                      <span className="bg-purple-100 text-purple-700 px-3 py-1 rounded-full text-sm font-medium">
-                        Рекомендуем
-                      </span>
-                    </div>
-                    <ul className="space-y-3">
-                      <li className="flex items-center">
-                        <svg className="w-5 h-5 text-purple-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-gray-700">Безлимитное создание рулеток</span>
-                      </li>
-                      <li className="flex items-center">
-                        <svg className="w-5 h-5 text-purple-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-gray-700">До 20 сегментов + изображения</span>
-                      </li>
-                      <li className="flex items-center">
-                        <svg className="w-5 h-5 text-purple-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-gray-700">Расширенные настройки дизайна</span>
-                      </li>
-                      <li className="flex items-center">
-                        <svg className="w-5 h-5 text-purple-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-gray-700">Вес призов, статистика</span>
-                      </li>
-                      <li className="flex items-center">
-                        <svg className="w-5 h-5 text-purple-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-gray-700">История розыгрышей</span>
-                      </li>
-                      <li className="flex items-center">
-                        <svg className="w-5 h-5 text-purple-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-gray-700">Экспорт результатов в CSV</span>
-                      </li>
-                      <li className="flex items-center">
-                        <svg className="w-5 h-5 text-purple-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-gray-700">Push-уведомления о новых участниках</span>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="bg-white rounded-xl shadow-sm p-6">
-                  <div className="text-center">
-                    {user.plan === 'free' ? (
-                      <div>
-                        <h3 className="text-xl font-semibold text-gray-900 mb-4">
-                          Готовы перейти на PRO?
-                        </h3>
-                        <p className="text-gray-600 mb-6">
-                          Получите доступ ко всем функциям и создавайте неограниченное количество рулеток
-                        </p>
-                        <Link
-                          href="/dashboard/subscription"
-                          className="bg-purple-600 text-white px-8 py-3 rounded-lg hover:bg-purple-700 transition-colors font-medium inline-block"
-                        >
-                          Обновить до PRO - от 400₽/мес
-                        </Link>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button 
+                            onClick={() => handleEditRoulette(wheel.id)}
+                            className="bg-yellow-500/20 text-yellow-400 border border-yellow-400/30 px-4 py-2 rounded-lg hover:bg-yellow-500/30 transition-all text-sm font-medium backdrop-blur-sm"
+                          >
+                            Редактировать
+                          </button>
+                          <button
+                            onClick={() => handleDeleteRoulette(wheel.id, wheel.title)}
+                            className="bg-red-500/20 text-red-400 border border-red-400/30 px-4 py-2 rounded-lg hover:bg-red-500/30 transition-all text-sm font-medium backdrop-blur-sm"
+                          >
+                            Удалить
+                          </button>
+                        </div>
                       </div>
-                    ) : (
-                      <div>
-                        <h3 className="text-xl font-semibold text-gray-900 mb-4">
-                          Спасибо за использование PRO!
-                        </h3>
-                        <p className="text-gray-600 mb-6">
-                          У вас есть доступ ко всем функциям платформы
-                        </p>
-                        <Link
-                          href="/dashboard/subscription"
-                          className="bg-gray-600 text-white px-8 py-3 rounded-lg hover:bg-gray-700 transition-colors font-medium inline-block"
-                        >
-                          Управление подпиской
-                        </Link>
+                    </div>
+
+                    <div className="ml-6 flex-shrink-0">
+                      <div className="w-16 h-16 bg-gradient-to-r from-orange-400 to-pink-400 rounded-full flex items-center justify-center shadow-lg">
+                        <span className="text-white font-bold text-lg">
+                          {index + 1}
+                        </span>
                       </div>
-                    )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Модальные окна */}
+      {/* Draw History Modal */}
       {showDrawHistory && (
-        <DrawHistory
-          wheelId={showDrawHistory.wheelId}
-          wheelTitle={showDrawHistory.wheelTitle}
-          onClose={() => setShowDrawHistory(null)}
-        />
-      )}
+        <div 
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={() => setShowDrawHistory(null)}
+        >
+          <div 
+            className="bg-gray-800/90 backdrop-blur-sm rounded-xl max-w-2xl w-full max-h-[80vh] overflow-hidden shadow-2xl border border-gray-700/50"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 border-b border-gray-700/50">
+              <div className="flex items-center justify-between">
+                <div>
+                <h3 className="text-xl font-semibold text-white">
+                  История вращений: {showDrawHistory.wheelTitle}
+                </h3>
+                  {user?.plan === 'pro' && drawHistory.length > 0 && (
+                    <p className="text-sm text-gray-400 mt-1">
+                      Доступно для экспорта: {drawHistory.length} записей
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center space-x-3">
+                  {user?.plan === 'pro' && drawHistory.length > 0 && (
+                <button
+                  onClick={() => {
+                        try {
+                          // Подготавливаем данные для CSV
+                          const csvData = drawHistory.map(spin => {
+                            const date = new Date(spin.createdAt);
+                            return {
+                              date: date.toLocaleDateString('ru-RU'),
+                              time: date.toLocaleTimeString('ru-RU'),
+                              result: spin.result,
+                              participant: spin.participant || '',
+                              userName: spin.user?.name || 'Гость',
+                            };
+                          });
 
-      <NotificationCenter
-        isOpen={showNotifications}
-        onClose={() => {
-          setShowNotifications(false);
-          // Обновляем счетчик непрочитанных уведомлений
-          if (user) {
-            const unread = getUnreadNotifications(user.id);
-            setUnreadCount(unread.length);
-          }
-        }}
-      />
+                          // Создаем CSV строку с BOM для корректного отображения кириллицы
+                          const headers = ['Дата', 'Время', 'Результат', 'Участник', 'Пользователь'];
+                          const csvContent = [
+                            headers.join(','),
+                            ...csvData.map(row => [
+                              row.date,
+                              row.time,
+                              `"${row.result}"`, // Экранируем кавычками на случай запятых
+                              `"${row.participant}"`,
+                              `"${row.userName}"`
+                            ].join(','))
+                          ].join('\n');
+
+                          // Создаем и скачиваем файл
+                          const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+                          const link = document.createElement('a');
+                          
+                          if (link.download !== undefined) {
+                            const url = URL.createObjectURL(blob);
+                            link.setAttribute('href', url);
+                            const filename = `История_вращений_${showDrawHistory.wheelTitle.replace(/[^a-zA-Z0-9]/g, '_')}.csv`;
+                            link.setAttribute('download', filename);
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                          }
+                        } catch (error) {
+                          console.error('Error exporting draw history:', error);
+                          alert('Ошибка при экспорте истории вращений');
+                        }
+                      }}
+                      className="bg-blue-500/20 text-blue-400 border border-blue-400/30 px-4 py-2 rounded-lg hover:bg-blue-500/30 transition-all text-sm font-medium backdrop-blur-sm"
+                    >
+                      Экспортировать в CSV
+                </button>
+                  )}
+                  <button
+                    onClick={() => setShowDrawHistory(null)}
+                    className="text-gray-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-700/50"
+                    title="Закрыть"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="max-h-96 overflow-y-auto">
+              {historyLoading ? (
+                <div className="p-8 text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-400 mx-auto mb-4"></div>
+                  <p className="text-gray-300">Загрузка истории вращений...</p>
+                </div>
+              ) : drawHistory.length === 0 ? (
+                <div className="p-8 text-center">
+                  <div className="w-16 h-16 bg-gray-700/50 rounded-full flex items-center justify-center mx-auto mb-4 border border-gray-600/30">
+                    <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-medium text-white mb-2">История вращений пуста</h3>
+                  <p className="text-gray-400 mb-4">Вы еще не совершали вращений на этой рулетке</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-700/30">
+                  {drawHistory.map((spin, index) => (
+                    <div key={spin.id} className="p-4 hover:bg-gray-700/20 transition-colors">
+                      <div className="flex items-start space-x-3">
+                        <div className="text-2xl">🔔</div>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-white">
+                            {spin.result}
+                          </p>
+                          <p className="text-sm text-gray-300 mt-1">
+                            {spin.participant}
+                          </p>
+                          <p className="text-xs text-gray-400 mt-2">
+                            {new Date(spin.createdAt).toLocaleString('ru-RU')}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

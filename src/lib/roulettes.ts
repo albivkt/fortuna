@@ -48,6 +48,19 @@ export const getUserRoulettes = (userId: string): Roulette[] => {
   }
 };
 
+// Получить все рулетки
+export const getAllRoulettes = (): Roulette[] => {
+  if (typeof window === 'undefined') return [];
+  
+  try {
+    const stored = localStorage.getItem(ROULETTES_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch (error) {
+    console.error('Error loading roulettes:', error);
+    return [];
+  }
+};
+
 // Получить рулетку по ID
 export const getRouletteById = (id: string): Roulette | null => {
   if (typeof window === 'undefined') return null;
@@ -116,8 +129,12 @@ export const deleteRoulette = (id: string): boolean => {
     const allRoulettes: Roulette[] = stored ? JSON.parse(stored) : [];
     
     const filteredRoulettes = allRoulettes.filter(r => r.id !== id);
-    localStorage.setItem(ROULETTES_KEY, JSON.stringify(filteredRoulettes));
     
+    if (filteredRoulettes.length === allRoulettes.length) {
+      return false; // Рулетка не найдена
+    }
+    
+    localStorage.setItem(ROULETTES_KEY, JSON.stringify(filteredRoulettes));
     return true;
   } catch (error) {
     console.error('Error deleting roulette:', error);

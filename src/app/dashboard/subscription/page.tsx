@@ -3,28 +3,112 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { getCurrentUser, updateUser, type User } from '@/lib/user';
+import { useMutation, useQuery, useApolloClient } from '@apollo/client';
+import { gql } from '@apollo/client';
+import { useMe } from '@/lib/graphql/hooks';
+import { updateUser } from '@/lib/user';
+
+// GraphQL запросы и мутации
+const GET_PLAN_LIMITS = gql`
+  query GetPlanLimits {
+    planLimits {
+      maxWheels
+      maxSegments
+      allowImages
+      allowWeights
+      allowCustomDesign
+      allowStatistics
+    }
+    me {
+      id
+      email
+      name
+      plan
+      planExpiresAt
+    }
+  }
+`;
+
+const UPGRADE_TO_PRO = gql`
+  mutation UpgradeToPro($period: String!) {
+    upgradeToPro(period: $period) {
+      id
+      plan
+      status
+      amount
+      period
+      startDate
+      endDate
+    }
+  }
+`;
+
+interface User {
+  id: string;
+  name?: string;
+  email: string;
+  plan: 'free' | 'pro';
+}
 
 export default function SubscriptionPage() {
   const [user, setUser] = useState<User | null>(null);
-  const [selectedPlan, setSelectedPlan] = useState<'monthly' | 'yearly'>('monthly');
+  const [selectedPlan, setSelectedPlan] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
   const [isProcessing, setIsProcessing] = useState(false);
   const router = useRouter();
+  const client = useApolloClient();
+
+  // GraphQL запросы
+  const { data: meData, loading: meLoading } = useMe();
+  const { data: planData, loading: planLoading, refetch } = useQuery(GET_PLAN_LIMITS, {
+    errorPolicy: 'ignore'
+  });
+  
+  const [upgradeToPro] = useMutation(UPGRADE_TO_PRO, {
+    onCompleted: (data) => {
+      console.log('✅ PRO upgrade completed:', data);
+      
+      // Обновляем локальные данные пользователя
+      if (user) {
+        const updatedUser: User = { 
+          ...user, 
+          plan: 'pro' as const 
+        };
+        setUser(updatedUser);
+        
+        // Обновляем localStorage для совместимости
+        updateUser({ plan: 'pro' });
+      }
+      
+      // Очищаем весь кэш Apollo для обновления всех компонентов
+      client.resetStore().then(() => {
+        console.log('🔄 Apollo cache reset after PRO upgrade');
+      });
+      
+      alert('Поздравляем! Вы успешно обновились до PRO плана!');
+      router.push('/dashboard');
+    },
+    onError: (error) => {
+      console.error('❌ Error upgrading to PRO:', error);
+      alert('Ошибка при обновлении до PRO: ' + error.message);
+    }
+  });
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (!token) {
+    if (meData?.me) {
+      const authenticatedUser = meData.me;
+      const userPlan = authenticatedUser.plan?.toLowerCase() || 'free';
+      
+      setUser({
+        id: authenticatedUser.id,
+        name: authenticatedUser.name,
+        email: authenticatedUser.email,
+        plan: userPlan as 'free' | 'pro'
+      });
+    } else if (!meLoading && !meData?.me) {
+      // Если пользователь не авторизован, перенаправляем на логин
       router.push('/login');
-      return;
     }
-
-    const userData = getCurrentUser();
-    if (userData) {
-      setUser(userData);
-    } else {
-      router.push('/login');
-    }
-  }, [router]);
+  }, [meData, meLoading, router]);
 
   const handleUpgradeToPro = async () => {
     if (!user) return;
@@ -35,14 +119,17 @@ export default function SubscriptionPage() {
       // Симуляция процесса оплаты
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      // Обновляем план пользователя
-      const updatedUser = updateUser({ plan: 'pro' });
-      if (updatedUser) {
-        setUser(updatedUser);
-        alert('Поздравляем! Вы успешно обновились до PRO плана!');
-        router.push('/dashboard');
-      }
+      // Используем GraphQL мутацию для обновления плана в базе данных
+      await upgradeToPro({
+        variables: { period: selectedPlan }
+      });
+      
+      // Также обновляем localStorage для совместимости
+      const updatedUser: User = { ...user, plan: 'pro' as const };
+      setUser(updatedUser);
+      
     } catch (error) {
+      console.error('Error upgrading to PRO:', error);
       alert('Произошла ошибка при обработке платежа. Попробуйте еще раз.');
     } finally {
       setIsProcessing(false);
@@ -53,11 +140,9 @@ export default function SubscriptionPage() {
     if (!user) return;
 
     if (confirm('Вы уверены, что хотите перейти на бесплатный план? Вы потеряете доступ к PRO функциям.')) {
-      const updatedUser = updateUser({ plan: 'free' });
-      if (updatedUser) {
-        setUser(updatedUser);
-        alert('Вы успешно перешли на бесплатный план.');
-      }
+      const updatedUser: User = { ...user, plan: 'free' as const };
+      setUser(updatedUser);
+      alert('Вы успешно перешли на бесплатный план.');
     }
   };
 
@@ -99,9 +184,16 @@ export default function SubscriptionPage() {
           <h1 className="text-4xl font-bold text-gray-900 mb-4">Управление подпиской</h1>
           <div className="inline-flex items-center px-6 py-3 rounded-full bg-white shadow-sm">
             <div className={`w-3 h-3 rounded-full mr-3 ${user.plan === 'pro' ? 'bg-purple-500' : 'bg-gray-400'}`}></div>
-            <span className="text-lg font-medium text-gray-900">
-              Текущий план: {user.plan === 'pro' ? 'PRO' : 'Бесплатный'}
-            </span>
+            <div className="text-center">
+              <span className="text-lg font-medium text-gray-900">
+                Текущий план: {user.plan === 'pro' ? 'PRO' : 'Бесплатный'}
+              </span>
+              {user.plan === 'pro' && planData?.me?.planExpiresAt && (
+                <div className="text-sm text-gray-600 mt-1">
+                  до {new Date(planData.me.planExpiresAt).toLocaleDateString('ru-RU')}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

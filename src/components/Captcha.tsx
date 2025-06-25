@@ -52,7 +52,7 @@ export default function Captcha({ onVerify, onReset }: CaptchaProps) {
     drawCaptcha(`${num1} ${operation} ${num2} = ?`);
   };
 
-  // Рисование CAPTCHA на canvas
+  // Рисование CAPTCHA на canvas для темной темы
   const drawCaptcha = (text: string) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -63,12 +63,12 @@ export default function Captcha({ onVerify, onReset }: CaptchaProps) {
     // Полная очистка canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Белый фон
-    ctx.fillStyle = '#FFFFFF';
+    // Темно-серый фон для темной темы
+    ctx.fillStyle = '#374151';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Легкий шум - только несколько светлых линий
-    ctx.strokeStyle = 'rgba(200, 200, 200, 0.5)';
+    // Легкий шум - несколько темных линий
+    ctx.strokeStyle = 'rgba(75, 85, 99, 0.5)';
     ctx.lineWidth = 1;
     for (let i = 0; i < 2; i++) {
       ctx.beginPath();
@@ -77,10 +77,10 @@ export default function Captcha({ onVerify, onReset }: CaptchaProps) {
       ctx.stroke();
     }
     
-    // Основной текст - крупный и черный
+    // Основной текст - крупный и белый
     ctx.font = 'bold 28px Arial, sans-serif';
-    ctx.fillStyle = '#000000';
-    ctx.strokeStyle = '#000000';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.strokeStyle = '#E5E7EB';
     ctx.lineWidth = 1;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -157,15 +157,15 @@ export default function Captcha({ onVerify, onReset }: CaptchaProps) {
 
   if (isVerified) {
     return (
-      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+      <div className="bg-green-500/20 border border-green-400/30 rounded-xl p-4 backdrop-blur-sm">
         <div className="flex items-center space-x-2">
-          <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
-          <span className="text-green-800 font-medium">CAPTCHA пройдена</span>
+          <span className="text-green-300 font-medium">CAPTCHA пройдена</span>
           <button
             onClick={resetCaptcha}
-            className="text-green-600 hover:text-green-800 text-sm underline"
+            className="text-green-400 hover:text-green-300 text-sm underline"
           >
             Обновить
           </button>
@@ -175,16 +175,16 @@ export default function Captcha({ onVerify, onReset }: CaptchaProps) {
   }
 
   return (
-    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+    <div className="bg-gray-700/50 border border-gray-600/50 rounded-xl p-4 backdrop-blur-sm">
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <label className="text-sm font-medium text-gray-700">
+          <label className="text-sm font-medium text-gray-300">
             Подтвердите, что вы не робот
           </label>
           <button
             onClick={generateQuestion}
             disabled={isLocked}
-            className="text-blue-600 hover:text-blue-800 text-sm underline disabled:opacity-50"
+            className="text-orange-400 hover:text-orange-300 text-sm underline disabled:opacity-50"
             title="Обновить CAPTCHA"
           >
             🔄
@@ -196,7 +196,7 @@ export default function Captcha({ onVerify, onReset }: CaptchaProps) {
             ref={canvasRef}
             width={200}
             height={60}
-            className="border border-gray-300 rounded bg-white"
+            className="border border-gray-600/50 rounded bg-gray-700"
           />
           
           <div className="flex-1">
@@ -207,14 +207,13 @@ export default function Captcha({ onVerify, onReset }: CaptchaProps) {
               onKeyPress={handleKeyPress}
               disabled={isLocked}
               placeholder="Ответ"
-              className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed text-gray-900 bg-white"
-              style={{ color: '#000000', backgroundColor: '#ffffff' }}
+              className="w-full px-3 py-2 bg-gray-600/50 border border-gray-500/50 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:border-orange-400/50 disabled:bg-gray-700 disabled:cursor-not-allowed transition-all backdrop-blur-sm"
             />
             
             <button
               onClick={checkAnswer}
               disabled={isLocked || !userAnswer}
-              className="mt-2 w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed text-sm"
+              className="mt-2 w-full bg-gradient-to-r from-orange-400 to-pink-400 text-white px-4 py-2 rounded-lg hover:from-orange-500 hover:to-pink-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
             >
               {isLocked ? 'Заблокировано' : 'Проверить'}
             </button>
@@ -222,18 +221,18 @@ export default function Captcha({ onVerify, onReset }: CaptchaProps) {
         </div>
         
         {attempts > 0 && !isLocked && (
-          <div className="text-red-600 text-sm">
+          <div className="text-red-400 text-sm">
             Неверный ответ. Попыток осталось: {3 - attempts}
           </div>
         )}
         
         {isLocked && (
-          <div className="text-red-600 text-sm">
+          <div className="text-red-400 text-sm">
             Слишком много неверных попыток. Попробуйте через 30 секунд.
           </div>
         )}
         
-        <div className="text-xs text-gray-500">
+        <div className="text-xs text-gray-400">
           Решите математический пример для продолжения
         </div>
       </div>

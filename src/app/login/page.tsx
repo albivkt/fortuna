@@ -1,23 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation, gql } from '@apollo/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { createUser, initializeUser, clearAllUserData } from '@/lib/user';
-
-const LOGIN_MUTATION = gql`
-  mutation Login($input: LoginInput!) {
-    login(input: $input) {
-      token
-      user {
-        id
-        email
-        name
-      }
-    }
-  }
-`;
+import { clearAllUserData, createUser, initializeUser } from '@/lib/user';
+import { useLogin } from '@/lib/graphql/hooks';
 
 export default function LoginPage() {
   const [formData, setFormData] = useState({
@@ -27,38 +14,7 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const router = useRouter();
 
-  const [login, { loading }] = useMutation(LOGIN_MUTATION, {
-    onCompleted: (data) => {
-      // Очищаем данные предыдущего пользователя
-      clearAllUserData();
-      
-      // Сохраняем токен в localStorage
-      localStorage.setItem('token', data.login.token);
-      
-      // Создаем и сохраняем данные пользователя (существующий пользователь)
-      const user = createUser({
-        name: data.login.user.name || 'Пользователь',
-        email: data.login.user.email
-      }, false);
-      
-      // Инициализируем пользователя с миграцией данных
-      initializeUser(user);
-      
-      // Перенаправляем в личный кабинет
-      router.push('/dashboard');
-    },
-    onError: (error) => {
-      console.error('Login error:', error);
-      // Показываем ошибку пользователю вместо автоматического входа
-      if (error.message.includes('Invalid credentials') || error.message.includes('User not found')) {
-        setError('Неверный email или пароль');
-      } else if (error.message.includes('Network error')) {
-        setError('Ошибка сети. Проверьте подключение к интернету');
-      } else {
-        setError('Ошибка входа. Попробуйте еще раз');
-      }
-    },
-  });
+  const [login, { loading }] = useLogin();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,32 +39,41 @@ export default function LoginPage() {
     }
 
     try {
-      await login({
+      // Очищаем данные предыдущего пользователя
+      clearAllUserData();
+      
+      const result = await login({
         variables: {
           input: formData,
         },
       });
-    } catch (err) {
-      // Ошибка уже обработана в onError
-      console.error('Login submission error:', err);
-    }
-  };
 
-  // Демо-вход для тестирования
-  const handleDemoLogin = () => {
-    // Очищаем данные предыдущего пользователя
-    clearAllUserData();
-    
-    const user = createUser({
-      name: 'Демо пользователь',
-      email: 'demo@example.com'
-    }, true); // Создаем как нового пользователя с бесплатным планом
-    
-    // Инициализируем пользователя с миграцией данных
-    initializeUser(user);
-    
-    localStorage.setItem('token', 'demo-token');
-    router.push('/dashboard');
+      if (result.data?.login) {
+        console.log('Login successful:', result.data.login);
+        
+        // Создаем и сохраняем данные пользователя (существующий пользователь)
+        const user = createUser({
+          name: result.data.login.user.name || 'Пользователь',
+          email: result.data.login.user.email
+        }, false);
+        
+        // Инициализируем пользователя с миграцией данных
+        initializeUser(user);
+        
+        // Перенаправляем в личный кабинет
+        router.push('/dashboard');
+      }
+    } catch (error: any) {
+      console.error('Login error:', error);
+      // Показываем ошибку пользователю
+      if (error.message.includes('Invalid credentials') || error.message.includes('User not found')) {
+        setError('Неверный email или пароль');
+      } else if (error.message.includes('Network error')) {
+        setError('Ошибка сети. Проверьте подключение к интернету');
+      } else {
+        setError('Ошибка входа. Попробуйте еще раз');
+      }
+    }
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -119,85 +84,111 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        {/* Header */}
-        <div className="text-center">
-          <div className="flex justify-center items-center space-x-2 mb-6">
-            <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-500 rounded-xl flex items-center justify-center">
-              <span className="text-white font-bold text-xl">G</span>
-            </div>
-            <span className="text-3xl font-bold text-gray-900">Gifty</span>
-          </div>
-          <h2 className="text-3xl font-bold text-gray-900">Вход</h2>
-        </div>
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+      {/* Background Pattern */}
+      <div className="absolute inset-0 opacity-10">
+        <div className="absolute inset-0" style={{
+          backgroundImage: `radial-gradient(circle at 25% 25%, rgba(255,255,255,0.1) 0%, transparent 50%), 
+                           radial-gradient(circle at 75% 75%, rgba(255,255,255,0.05) 0%, transparent 50%)`
+        }}></div>
+      </div>
 
-        {/* Form */}
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div className="space-y-4">
+      {/* Main Card */}
+      <div className="relative z-10 w-full max-w-md">
+        <div className="bg-gray-800/80 backdrop-blur-sm rounded-3xl shadow-2xl border border-gray-700/50 p-8">
+          
+          {/* Header with Icon */}
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 bg-gray-700/50 rounded-full flex items-center justify-center mx-auto mb-6 border border-gray-600/30">
+              <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+            </div>
+            
+            <h1 className="text-2xl font-bold text-white mb-2">Добро пожаловать</h1>
+            <p className="text-gray-400">Войдите в свой аккаунт</p>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="space-y-6">
+            
+            {/* Email Field */}
             <div>
+              <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
+                Email Address
+              </label>
               <input
                 id="email"
                 name="email"
                 type="email"
                 autoComplete="email"
                 required
-                placeholder="Email"
+                placeholder="Введите ваш email..."
                 value={formData.email}
                 onChange={handleChange}
-                className="appearance-none relative block w-full px-4 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:z-10 text-lg"
+                className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600/50 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:border-orange-400/50 transition-all backdrop-blur-sm"
               />
             </div>
+
+            {/* Password Field */}
             <div>
+              <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
+                Password
+              </label>
               <input
                 id="password"
                 name="password"
                 type="password"
                 autoComplete="current-password"
                 required
-                placeholder="Пароль (минимум 6 символов)"
+                placeholder="••••••••••"
                 value={formData.password}
                 onChange={handleChange}
-                className="appearance-none relative block w-full px-4 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:z-10 text-lg"
+                className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600/50 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:border-orange-400/50 transition-all backdrop-blur-sm"
               />
             </div>
-          </div>
 
-          {error && (
-            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
-              {error}
-            </div>
-          )}
+            {/* Error Message */}
+            {error && (
+              <div className="bg-red-500/20 border border-red-400/30 rounded-xl p-4 backdrop-blur-sm">
+                <p className="text-red-300 text-sm">{error}</p>
+              </div>
+            )}
 
-          <div>
+            {/* Sign In Button */}
             <button
               type="submit"
               disabled={loading}
-              className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-lg font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="w-full bg-gradient-to-r from-orange-400 to-pink-400 text-white py-3 px-4 rounded-xl font-semibold hover:from-orange-500 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-105 shadow-lg btn-glow"
             >
               {loading ? 'Вход...' : 'Войти'}
             </button>
-          </div>
 
-          <div className="text-center space-y-4">
-            <div>
-              <span className="text-gray-600">Нет аккаунта? </span>
-              <Link href="/register" className="text-blue-600 hover:text-blue-500 font-medium">
+            {/* Sign Up Link */}
+            <div className="text-center pt-4">
+              <span className="text-gray-400 text-sm">Нет аккаунта? </span>
+              <Link 
+                href="/register" 
+                className="text-orange-400 hover:text-orange-300 font-semibold transition-colors underline"
+              >
                 Зарегистрироваться
               </Link>
             </div>
-            
-            <div className="border-t border-gray-200 pt-4">
-              <button
-                type="button"
-                onClick={handleDemoLogin}
-                className="w-full bg-gray-100 text-gray-700 px-4 py-3 rounded-lg hover:bg-gray-200 transition-colors font-medium"
-              >
-                Демо-вход (для тестирования)
-              </button>
-            </div>
-          </div>
-        </form>
+          </form>
+        </div>
+
+        {/* Back to Home Link */}
+        <div className="text-center mt-6">
+          <Link 
+            href="/" 
+            className="text-gray-400 hover:text-white transition-colors text-sm flex items-center justify-center space-x-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            <span>Вернуться на главную</span>
+          </Link>
+        </div>
       </div>
     </div>
   );
