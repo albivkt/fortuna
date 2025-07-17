@@ -207,7 +207,7 @@ export default function PublicWheelPage() {
                 isSpinning={isSpinning}
                 disabled={isSpinning}
                 customDesign={wheel.customDesign}
-                isPro={wheel.user?.plan === 'pro'}
+                isPro={(wheel.user as any)?.plan?.toLowerCase() === 'pro'}
               />
             </div>
           </div>

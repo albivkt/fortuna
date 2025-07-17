@@ -26,6 +26,7 @@ export default function RoulettePage() {
   const [participantName, setParticipantName] = useState('');
   const [hasJoined, setHasJoined] = useState(false);
   const [user, setUser] = useState<User | null>(null);
+  const [showFullHistory, setShowFullHistory] = useState(false);
 
 
   const wheel = wheelQueryData?.wheel;
@@ -50,7 +51,21 @@ export default function RoulettePage() {
     const currentUser = getOrCreateUser();
     setUser(currentUser);
     console.log('👤 Current user in roulette page:', currentUser);
-  }, []);
+    
+    // Отладка данных спинов
+    if (wheel?.spins) {
+      console.log('🔍 Данные спинов:', wheel.spins);
+      wheel.spins.forEach((spin, index) => {
+        console.log(`Спин ${index + 1}:`, {
+          id: spin.id,
+          result: spin.result,
+          participant: spin.participant,
+          user: spin.user,
+          createdAt: spin.createdAt
+        });
+      });
+    }
+  }, [wheel]);
 
 
 
@@ -63,28 +78,45 @@ export default function RoulettePage() {
     }
   };
 
-  const handleStopSpinning = async () => {
+  const handleStopSpinning = async (actualWinnerIndex?: number) => {
     if (!wheel) return;
     
     setMustSpin(false);
-    const winningSegment = wheel.segments[prizeNumber];
+    
+    // Используем actualWinnerIndex если он передан, иначе используем prizeNumber
+    const winnerIndex = actualWinnerIndex !== undefined ? actualWinnerIndex : prizeNumber;
+    const winningSegment = wheel.segments[winnerIndex];
+    
+    console.log(`🎯 Рулетка остановилась на призе ${prizeNumber} (ожидаемый)`);
+    console.log(`🎯 Реальный победитель: ${winnerIndex}`);
+    console.log(`🎯 Выигрышный сегмент:`, winningSegment);
     
     // Получаем имя пользователя: либо введенное имя участника, либо имя зарегистрированного пользователя
     const currentUser = getOrCreateUser();
     console.log('Пользователь при розыгрыше:', currentUser);
     console.log('hasJoined:', hasJoined, 'participantName:', participantName);
     
-    const winnerName = hasJoined && participantName 
-      ? participantName 
+    let winnerName = hasJoined && participantName.trim() 
+      ? participantName.trim() 
       : currentUser.name;
     
+    // Если имя пользователя по умолчанию "Пользователь", делаем участника более конкретным
+    if (winnerName === 'Пользователь' || !winnerName) {
+      winnerName = hasJoined && participantName.trim() ? participantName.trim() : 'Участник';
+    }
+    
     console.log('Имя победителя:', winnerName);
+    console.log('📤 Отправляем в GraphQL:', {
+      wheelId: wheel.id,
+      result: winningSegment.option,
+      participant: winnerName
+    });
     
     setWinner(`${winnerName} выиграл: ${winningSegment.option}`);
 
     try {
       // Отправляем результат через GraphQL
-      await spinWheel({
+      const spinResult = await spinWheel({
         variables: {
           input: {
             wheelId: wheel.id,
@@ -93,8 +125,10 @@ export default function RoulettePage() {
           }
         }
       });
+      
+      console.log('✅ Результат сохранения:', spinResult.data?.spinWheel);
 
-      // Перезагружаем данные рулетки для обновления истории
+      // Перезагружаем данные рулетки, чтобы обновить историю розыгрышей
       refetchWheel();
 
       // Создаем уведомление о завершении розыгрыша
@@ -270,7 +304,7 @@ export default function RoulettePage() {
                                              console.log('🎨 Wheel custom design:', wheel.customDesign);
                        console.log('👤 Current user:', user);
                        console.log('👤 Wheel owner:', wheel.user);
-                       console.log('🔒 Is PRO?', user?.plan === 'pro' || (wheel.user.id === user?.id && wheel.user.plan === 'pro'));
+                       console.log('🔒 Wheel owner is PRO?', (wheel.user as any)?.plan?.toLowerCase() === 'pro');
                       return (
                         <CustomWheel
                           mustStartSpinning={mustSpin}
@@ -278,7 +312,7 @@ export default function RoulettePage() {
                           data={wheelData}
                           onStopSpinning={handleStopSpinning}
                           customDesign={wheel.customDesign}
-                          isPro={user?.plan === 'pro' || (wheel.user.id === user?.id && wheel.user.plan === 'pro')}
+                          isPro={(wheel.user as any)?.plan?.toLowerCase() === 'pro'}
                           size="large"
                         />
                       );
@@ -359,7 +393,18 @@ export default function RoulettePage() {
 
           {/* Draw History */}
           <div className="bg-gray-800/80 backdrop-blur-sm rounded-3xl shadow-2xl border border-gray-700/50 p-8">
-            <h3 className="text-2xl font-bold text-white mb-6 text-center">История розыгрышей</h3>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-2xl font-bold text-white">История розыгрышей</h3>
+              {wheel.spins && wheel.spins.length > 10 && (
+                <button
+                  onClick={() => setShowFullHistory(!showFullHistory)}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
+                >
+                  {showFullHistory ? 'Показать последние 10' : `Показать все (${wheel.spins.length})`}
+                </button>
+              )}
+            </div>
+            
             {(!wheel.spins || wheel.spins.length === 0) ? (
               <div className="text-center py-8">
                 <div className="w-16 h-16 bg-gray-700/50 rounded-full flex items-center justify-center mx-auto mb-4 border border-gray-600/30">
@@ -372,41 +417,63 @@ export default function RoulettePage() {
               </div>
             ) : (
               <div className="space-y-4">
-                {wheel.spins.slice(-10).reverse().map((spin, index) => (
-                <div
-                  key={spin.id}
-                  className="flex items-center justify-between p-4 rounded-xl bg-gray-700/50 border border-gray-600/30 hover:bg-gray-700/70 transition-all"
-                >
-                  <div className="flex items-center space-x-4">
-                    <div className="w-10 h-10 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-full flex items-center justify-center">
-                      <span className="text-white font-bold text-sm">🏆</span>
-                    </div>
-                    <div>
-                      <div className="text-white font-semibold">
-                        {spin.participant || spin.user?.name || 'Участник'} выиграл: <span className="text-yellow-300">{spin.result}</span>
+                <div className={`space-y-4 ${showFullHistory && wheel.spins.length > 10 ? 'max-h-96 overflow-y-auto' : ''}`}>
+                  {(showFullHistory ? wheel.spins.slice().reverse() : wheel.spins.slice(-10).reverse()).map((spin, index) => {
+                    // Отладочная информация
+                    console.log('🔍 Отображение спина:', {
+                      id: spin.id,
+                      result: spin.result,
+                      participant: spin.participant,
+                      userName: spin.user?.name,
+                      displayName: spin.participant || spin.user?.name || 'Участник'
+                    });
+                    
+                    return (
+                      <div
+                        key={spin.id}
+                        className="flex items-center justify-between p-4 rounded-xl bg-gray-700/50 border border-gray-600/30 hover:bg-gray-700/70 transition-all"
+                      >
+                        <div className="flex items-center space-x-4">
+                          <div className="w-10 h-10 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-full flex items-center justify-center">
+                            <span className="text-white font-bold text-sm">🏆</span>
+                          </div>
+                          <div>
+                            <div className="text-white font-semibold">
+                              <span className="text-blue-300 font-bold">
+                                {(() => {
+                                  const displayName = spin.participant || spin.user?.name || 'Участник';
+                                  // Если имя пользователя "Пользователь", используем "Участник"
+                                  return displayName === 'Пользователь' ? 'Участник' : displayName;
+                                })()}
+                              </span> выиграл: <span className="text-yellow-300">{spin.result}</span>
+                            </div>
+                            <div className="text-gray-400 text-sm">
+                              {(() => {
+                                // Проверяем, есть ли валидная дата
+                                if (spin.createdAt && !isNaN(new Date(spin.createdAt).getTime())) {
+                                  const date = new Date(spin.createdAt);
+                                  return `📅 ${date.toLocaleDateString('ru-RU')} в ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+                                }
+                                return `📅 Дата не указана`;
+                              })()}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-gray-500 text-sm">
+                          #{showFullHistory ? wheel.spins.length - index : wheel.spins.length - index}
+                        </div>
                       </div>
-                      <div className="text-gray-400 text-sm">
-                        {(() => {
-                          // Проверяем, есть ли валидная дата
-                          if (spin.createdAt && !isNaN(new Date(spin.createdAt).getTime())) {
-                            const date = new Date(spin.createdAt);
-                            return `📅 ${date.toLocaleDateString('ru-RU')} в ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
-                          }
-                          return `📅 Дата не указана`;
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-gray-500 text-sm">
-                    #{wheel.spins.length - index}
-                  </div>
+                    );
+                  })}
                 </div>
-                                ))}
-              </div>
-            )}
-            {wheel.spins && wheel.spins.length > 10 && (
-              <div className="text-center mt-6">
-                <p className="text-gray-400">Показано последние 10 розыгрышей из {wheel.spins.length}</p>
+                
+                {!showFullHistory && wheel.spins.length > 10 && (
+                  <div className="text-center pt-4">
+                    <p className="text-gray-400 text-sm">
+                      Показано последние 10 розыгрышей из {wheel.spins.length}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>

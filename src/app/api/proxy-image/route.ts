@@ -16,6 +16,10 @@ export async function GET(request: NextRequest) {
     const allowedDomains = [
       'https://s3.twcstorage.ru',
       'https://github.githubassets.com', // Для тестирования
+      'https://picsum.photos', // Для тестирования центральных изображений
+      'https://via.placeholder.com', // Надежный сервис для тестовых изображений
+      'https://httpbin.org', // Для тестирования HTTP запросов
+      'https://jsonplaceholder.typicode.com', // Популярный тестовый API
     ];
 
     const isAllowed = allowedDomains.some(domain => imageUrl.startsWith(domain));

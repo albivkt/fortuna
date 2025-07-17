@@ -160,7 +160,7 @@ export default function EditRoulettePage() {
             text: segment.option,
             color: segment.style.backgroundColor,
             image: (segment.image && segment.image.trim() !== '') ? segment.image : null,
-            imagePosition: segment.imagePosition || { x: 0, y: 0 }
+            imagePosition: segment.imagePosition ? { x: segment.imagePosition.x, y: segment.imagePosition.y } : { x: 0, y: 0 }
           };
         });
         
@@ -264,10 +264,10 @@ export default function EditRoulettePage() {
           option: segment.text,
           style: {
             backgroundColor: segment.color,
-            textColor: user?.plan === 'pro' ? customDesign.textColor : 'white'
-          },
-          image: segment.image && segment.image.trim() !== '' ? segment.image : undefined,
-          imagePosition: segment.imagePosition
+                    textColor: user?.plan === 'pro' ? customDesign.textColor : 'white'
+      },
+      image: segment.image && segment.image.trim() !== '' ? segment.image : undefined,
+      imagePosition: { x: segment.imagePosition.x, y: segment.imagePosition.y }
         })),
         isPublic: wheelData?.wheel?.isPublic || false,
         customDesign: customDesign

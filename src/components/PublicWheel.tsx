@@ -37,9 +37,16 @@ export function PublicWheel({ segments, onSpin, isSpinning, disabled, customDesi
     setMustStartSpinning(true);
   };
 
-  const handleStopSpinning = async () => {
+  const handleStopSpinning = async (actualWinnerIndex?: number) => {
     setMustStartSpinning(false);
-    const result = segments[prizeNumber]?.option || 'Неизвестно';
+    
+    // Используем actualWinnerIndex если он передан, иначе используем prizeNumber
+    const winnerIndex = actualWinnerIndex !== undefined ? actualWinnerIndex : prizeNumber;
+    const result = segments[winnerIndex]?.option || 'Неизвестно';
+    
+    console.log(`🎯 PublicWheel: Ожидаемый победитель: ${prizeNumber} (${segments[prizeNumber]?.option})`);
+    console.log(`🎯 PublicWheel: Реальный победитель: ${winnerIndex} (${result})`);
+    
     await onSpin(result);
   };
 

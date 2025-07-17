@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 
 interface WheelData {
   option: string;
@@ -21,7 +21,7 @@ interface CustomWheelProps {
   mustStartSpinning: boolean;
   prizeNumber: number;
   data: WheelData[];
-  onStopSpinning: () => void;
+  onStopSpinning: (actualWinnerIndex?: number) => void;
   customDesign?: CustomDesign;
   isPro?: boolean;
   size?: 'small' | 'medium' | 'large';
@@ -48,8 +48,54 @@ export function CustomWheel({
   const [isSpinning, setIsSpinning] = useState(false);
   const [currentRotation, setCurrentRotation] = useState(0);
   const [images, setImages] = useState<{ [key: number]: HTMLImageElement }>({});
+  const [centerImage, setCenterImage] = useState<HTMLImageElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragSegment, setDragSegment] = useState<number>(-1);
+  
+  // Ref для сохранения финальной позиции рулетки
+  const finalRotationRef = useRef<number>(0);
+
+  // Функция для определения победителя на основе финальной позиции рулетки
+  const getWinnerFromRotation = (rotation: number, segmentsCount: number) => {
+    // Нормализуем угол к диапазону [0, 2π]
+    const normalizedRotation = ((rotation % (Math.PI * 2)) + (Math.PI * 2)) % (Math.PI * 2);
+    
+    // Угол на сегмент
+    const anglePerSegment = (Math.PI * 2) / segmentsCount;
+    
+    // Стрелка указывает вверх (угол 3π/2 в нормализованных координатах)
+    const pointerAngle = (3 * Math.PI / 2);
+    
+    // Вычисляем относительный угол от стрелки
+    let relativeAngle = (pointerAngle - normalizedRotation + (Math.PI * 2)) % (Math.PI * 2);
+    
+    // Определяем номер сегмента
+    let segmentIndex = Math.floor(relativeAngle / anglePerSegment);
+    
+    // Проверяем, не находимся ли мы очень близко к границе сегмента
+    const segmentProgress = (relativeAngle % anglePerSegment) / anglePerSegment;
+    
+    // Если мы очень близко к следующему сегменту (в пределах 1% от размера сегмента)
+    if (segmentProgress > 0.99) {
+      segmentIndex = (segmentIndex + 1) % segmentsCount;
+      console.log(`🎯 getWinnerFromRotation: Скорректировали на границе сегмента`);
+    }
+    
+    // Убеждаемся, что индекс в правильном диапазоне
+    segmentIndex = Math.max(0, Math.min(segmentIndex, segmentsCount - 1));
+    
+    console.log(`🎯 getWinnerFromRotation: rotation=${rotation.toFixed(4)}, normalized=${normalizedRotation.toFixed(4)}, relativeAngle=${relativeAngle.toFixed(4)}, segmentProgress=${segmentProgress.toFixed(4)}, segmentIndex=${segmentIndex}`);
+    
+    return segmentIndex;
+  };
+
+  // Восстанавливаем сохраненную позицию при изменении данных
+  useEffect(() => {
+    if (finalRotationRef.current !== 0 && !isSpinning) {
+      console.log('🔄 CustomWheel: Восстанавливаем сохраненную позицию:', finalRotationRef.current);
+      setCurrentRotation(finalRotationRef.current);
+    }
+  }, [data, isSpinning]);
 
   const sizeConfig = {
     small: { radius: 120, fontSize: 11, textDistance: 80 },
@@ -60,6 +106,23 @@ export function CustomWheel({
   const config = sizeConfig[size];
   const backgroundColor = isPro && customDesign?.backgroundColor ? customDesign.backgroundColor : 'transparent';
   const borderColor = isPro && customDesign?.borderColor ? customDesign.borderColor : '#ffffff';
+
+  // Стабилизируем зависимости для useEffect
+  const renderDeps = useMemo(() => {
+    const deps = {
+      data,
+      currentRotation,
+      images,
+      config,
+      borderColor,
+      isPro: Boolean(isPro),
+      centerImage: centerImage || null
+    };
+    
+    console.log('🎯 CustomWheel: renderDeps обновлен, centerImage =', deps.centerImage ? 'загружено' : 'null');
+    
+    return deps;
+  }, [data, currentRotation, images, config, borderColor, isPro, centerImage]);
 
   // Функция для попытки загрузки через прокси API
   const tryProxyLoad = (imageUrl: string, index: number, newImages: { [key: number]: HTMLImageElement }, resolve: () => void) => {
@@ -145,6 +208,8 @@ export function CustomWheel({
       console.group('🔄 CustomWheel: Начинаем загрузку изображений');
       console.log('Общее количество сегментов:', data.length);
       console.log('Сегменты с изображениями:', data.filter(s => s.image).length);
+      console.log('Состояние вращения:', isSpinning);
+      console.log('Текущий поворот:', currentRotation);
       console.table(data.map((s, i) => ({ 
         index: i, 
         hasImage: !!s.image, 
@@ -233,10 +298,118 @@ export function CustomWheel({
       setImages(newImages);
     };
 
-    // Сбрасываем изображения при изменении данных
+    // Только сбрасываем изображения, НЕ сбрасываем поворот рулетки
     setImages({});
     loadImages();
   }, [data]);
+
+  // Загружаем центральное изображение
+  useEffect(() => {
+    console.log('🎯 CustomWheel: useEffect для центрального изображения вызван');
+    console.log('🎯 CustomWheel: isPro =', isPro);
+    console.log('🎯 CustomWheel: customDesign =', customDesign);
+    console.log('🎯 CustomWheel: customDesign?.centerImage =', customDesign?.centerImage);
+    
+    if (isPro && customDesign?.centerImage && customDesign.centerImage.trim() !== '') {
+      console.log('🎯 CustomWheel: Загружаем центральное изображение:', customDesign.centerImage);
+      
+      const loadCenterImage = () => {
+        return new Promise<void>((resolve) => {
+          // Если это data URI, загружаем напрямую
+          if (customDesign.centerImage!.startsWith('data:')) {
+            console.log('🎯 CustomWheel: Обнаружен data URI, загружаем напрямую');
+            const img = new Image();
+            img.onload = () => {
+              console.log('✅ CustomWheel: Центральное изображение (data URI) загружено:', img.width, 'x', img.height);
+              setCenterImage(img);
+              resolve();
+            };
+            img.onerror = (error) => {
+              console.error('❌ CustomWheel: Ошибка загрузки data URI:', error);
+              setCenterImage(null);
+              resolve();
+            };
+            img.src = customDesign.centerImage!;
+            return;
+          }
+          
+          // Сначала пробуем загрузить БЕЗ CORS
+          const img = new Image();
+          
+          img.onload = () => {
+            console.log('✅ CustomWheel: Центральное изображение загружено:', img.width, 'x', img.height);
+            setCenterImage(img);
+            resolve();
+          };
+          
+          img.onerror = (error) => {
+            console.log('🔄 CustomWheel: Ошибка загрузки центрального изображения без CORS, пробуем с CORS...');
+            
+            // Попробуем загрузить С CORS
+            const img2 = new Image();
+            img2.crossOrigin = 'anonymous';
+            
+            img2.onload = () => {
+              console.log('✅ CustomWheel: Центральное изображение загружено с CORS:', img2.width, 'x', img2.height);
+              setCenterImage(img2);
+              resolve();
+            };
+            
+            img2.onerror = (error2) => {
+              console.log('🔄 CustomWheel: Ошибка загрузки центрального изображения с CORS, пробуем через прокси...');
+              
+              // Последняя попытка - попробуем через прокси API
+              const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(customDesign.centerImage!)}`;
+              console.log('🔗 CustomWheel: Прокси URL для центрального изображения:', proxyUrl);
+              
+              const img3 = new Image();
+              img3.crossOrigin = 'anonymous';
+              
+              img3.onload = () => {
+                console.log('✅ CustomWheel: Центральное изображение загружено через прокси:', img3.width, 'x', img3.height);
+                setCenterImage(img3);
+                resolve();
+              };
+              
+              img3.onerror = (error3) => {
+                console.error('❌ CustomWheel: Все попытки загрузки центрального изображения не удались:', error3);
+                console.log('🔄 CustomWheel: Пробуем загрузить резервное изображение...');
+                
+                // Последняя попытка - используем встроенное резервное изображение
+                const fallbackImage = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0iIzAwN2JmZiIgLz4KICA8dGV4dCB4PSI1MCIgeT0iNTUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IndoaXRlIiBmb250LXNpemU9IjEwIiBmb250LXdlaWdodD0iYm9sZCI+Rk9SVFVOQTWVOVUE8L3RleHQ+Cjwvc3ZnPgo=';
+                
+                const img4 = new Image();
+                img4.onload = () => {
+                  console.log('✅ CustomWheel: Резервное центральное изображение загружено:', img4.width, 'x', img4.height);
+                  setCenterImage(img4);
+                  resolve();
+                };
+                
+                img4.onerror = (error4) => {
+                  console.error('❌ CustomWheel: Даже резервное изображение не удалось загрузить:', error4);
+                  setCenterImage(null);
+                  resolve();
+                };
+                
+                img4.src = fallbackImage;
+              };
+              
+              img3.src = proxyUrl;
+            };
+            
+            img2.src = customDesign.centerImage!;
+          };
+          
+          img.src = customDesign.centerImage!;
+        });
+      };
+      
+      loadCenterImage();
+    } else {
+      console.log('🎯 CustomWheel: Центральное изображение не загружается - условие не выполнено');
+      setCenterImage(null);
+    }
+  }, [isPro, customDesign?.centerImage]);
 
   // Функция для получения координат мыши относительно canvas
   const getMousePos = (canvas: HTMLCanvasElement, e: MouseEvent) => {
@@ -255,15 +428,15 @@ export function CustomWheel({
     const dy = y - centerY;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
-    if (distance > config.radius) return -1;
+    if (distance > renderDeps.config.radius) return -1;
     
-    let angle = Math.atan2(dy, dx) - currentRotation;
+    let angle = Math.atan2(dy, dx) - renderDeps.currentRotation;
     if (angle < 0) angle += Math.PI * 2;
     
-    const anglePerSegment = (Math.PI * 2) / data.length;
+    const anglePerSegment = (Math.PI * 2) / renderDeps.data.length;
     const segmentIndex = Math.floor(angle / anglePerSegment);
     
-    return segmentIndex >= 0 && segmentIndex < data.length ? segmentIndex : -1;
+    return segmentIndex >= 0 && segmentIndex < renderDeps.data.length ? segmentIndex : -1;
   };
 
   // Обработчики мыши для перетаскивания изображений
@@ -279,7 +452,7 @@ export function CustomWheel({
     
     const segmentIndex = getSegmentAtPoint(mousePos.x, mousePos.y, centerX, centerY);
     
-    if (segmentIndex >= 0 && data[segmentIndex].image) {
+    if (segmentIndex >= 0 && renderDeps.data[segmentIndex].image) {
       setIsDragging(true);
       setDragSegment(segmentIndex);
       canvas.style.cursor = 'grabbing';
@@ -298,7 +471,7 @@ export function CustomWheel({
     
     if (isDragging && dragSegment >= 0) {
       // Вычисляем новую позицию изображения
-      const segmentAngle = (dragSegment * (Math.PI * 2) / data.length) + currentRotation + (Math.PI / data.length);
+      const segmentAngle = (dragSegment * (Math.PI * 2) / renderDeps.data.length) + renderDeps.currentRotation + (Math.PI / renderDeps.data.length);
       const dx = mousePos.x - centerX;
       const dy = mousePos.y - centerY;
       
@@ -307,8 +480,8 @@ export function CustomWheel({
       const localY = dx * Math.sin(-segmentAngle) + dy * Math.cos(-segmentAngle);
       
       // Нормализуем позицию (-1 до 1)
-      const normalizedX = Math.max(-1, Math.min(1, localX / (config.radius * 0.5)));
-      const normalizedY = Math.max(-1, Math.min(1, localY / (config.radius * 0.5)));
+      const normalizedX = Math.max(-1, Math.min(1, localX / (renderDeps.config.radius * 0.5)));
+      const normalizedY = Math.max(-1, Math.min(1, localY / (renderDeps.config.radius * 0.5)));
       
       if (onImagePositionChange) {
         onImagePositionChange(dragSegment, { x: normalizedX, y: normalizedY });
@@ -316,7 +489,7 @@ export function CustomWheel({
     } else {
       // Проверяем, находится ли курсор над изображением
       const segmentIndex = getSegmentAtPoint(mousePos.x, mousePos.y, centerX, centerY);
-      if (segmentIndex >= 0 && data[segmentIndex].image) {
+      if (segmentIndex >= 0 && renderDeps.data[segmentIndex].image) {
         canvas.style.cursor = 'grab';
       } else {
         canvas.style.cursor = 'default';
@@ -345,16 +518,16 @@ export function CustomWheel({
 
     const centerX = canvas.width / 2;
     const centerY = canvas.height / 2;
-    const radius = config.radius;
+    const radius = renderDeps.config.radius;
 
     // Очищаем canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Рисуем сегменты
-    const anglePerSegment = (Math.PI * 2) / data.length;
+    const anglePerSegment = (Math.PI * 2) / renderDeps.data.length;
     
-    data.forEach((segment, index) => {
-      const startAngle = index * anglePerSegment + currentRotation;
+    renderDeps.data.forEach((segment, index) => {
+      const startAngle = index * anglePerSegment + renderDeps.currentRotation;
       const endAngle = startAngle + anglePerSegment;
 
       // Рисуем сегмент
@@ -364,13 +537,13 @@ export function CustomWheel({
       ctx.closePath();
 
       // Заливка сегмента
-      if (segment.image && images[index]) {
+      if (segment.image && renderDeps.images[index]) {
         console.log(`🎨 CustomWheel: Рисуем изображение для сегмента ${index}`, { 
           imageUrl: segment.image, 
-          imageLoaded: !!images[index],
+          imageLoaded: !!renderDeps.images[index],
           imagePosition: segment.imagePosition,
-          imageWidth: images[index]?.width,
-          imageHeight: images[index]?.height
+          imageWidth: renderDeps.images[index]?.width,
+          imageHeight: renderDeps.images[index]?.height
         });
         
         ctx.save();
@@ -380,7 +553,7 @@ export function CustomWheel({
         const imagePos = segment.imagePosition || { x: 0, y: 0 };
         
         // Вычисляем размеры и позицию для правильного заполнения сегмента
-        const img = images[index];
+        const img = renderDeps.images[index];
         const segmentCenterAngle = startAngle + anglePerSegment / 2;
         
         // Размер изображения должен покрывать весь сегмент
@@ -405,7 +578,7 @@ export function CustomWheel({
         ctx.restore();
         
         ctx.restore();
-      } else if (segment.image && !images[index]) {
+      } else if (segment.image && !renderDeps.images[index]) {
         console.log(`⏳ CustomWheel: Изображение для сегмента ${index} еще загружается`);
         // Обычная заливка цветом пока изображение загружается
         ctx.fillStyle = segment.style.backgroundColor;
@@ -417,7 +590,7 @@ export function CustomWheel({
       }
 
       // Обводка сегмента
-      ctx.strokeStyle = borderColor;
+      ctx.strokeStyle = renderDeps.borderColor;
       ctx.lineWidth = 2;
       ctx.stroke();
 
@@ -427,7 +600,7 @@ export function CustomWheel({
       ctx.rotate(startAngle + anglePerSegment / 2);
       
       ctx.fillStyle = segment.style.textColor;
-      ctx.font = `${config.fontSize}px Arial`;
+      ctx.font = `${renderDeps.config.fontSize}px Arial`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       
@@ -437,7 +610,7 @@ export function CustomWheel({
       ctx.shadowOffsetX = 1;
       ctx.shadowOffsetY = 1;
       
-      ctx.fillText(segment.option, config.textDistance, 0);
+      ctx.fillText(segment.option, renderDeps.config.textDistance, 0);
       ctx.restore();
     });
 
@@ -449,25 +622,101 @@ export function CustomWheel({
     ctx.lineTo(-15, -20);
     ctx.lineTo(15, -20);
     ctx.closePath();
-    ctx.fillStyle = borderColor;
+    ctx.fillStyle = renderDeps.borderColor;
     ctx.fill();
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.restore();
 
-  }, [data, currentRotation, images, config, borderColor]);
+    // Рисуем центральное изображение (PRO функция)
+    console.log('🎯 CustomWheel: Проверяем центральное изображение');
+    console.log('🎯 CustomWheel: renderDeps.isPro =', renderDeps.isPro);
+    console.log('🎯 CustomWheel: renderDeps.centerImage =', renderDeps.centerImage);
+    
+    if (renderDeps.isPro && renderDeps.centerImage) {
+      console.log('🎯 CustomWheel: Рисуем центральное изображение');
+      console.log('🎯 CustomWheel: centerX =', centerX, 'centerY =', centerY, 'radius =', radius);
+      
+      ctx.save();
+      
+      // Размер центрального изображения (60% от радиуса для тестирования)
+      const centerImageSize = radius * 0.6;
+      console.log('🎯 CustomWheel: centerImageSize =', centerImageSize);
+      
+      // ВРЕМЕННО: Убираем маску для тестирования
+      // ctx.beginPath();
+      // ctx.arc(centerX, centerY, centerImageSize / 2, 0, Math.PI * 2);
+      // ctx.clip();
+      
+      // Рисуем изображение в центре
+      const imageX = centerX - centerImageSize / 2;
+      const imageY = centerY - centerImageSize / 2;
+      console.log('🎯 CustomWheel: Рисуем изображение в позиции x =', imageX, 'y =', imageY, 'size =', centerImageSize);
+      
+      ctx.drawImage(
+        renderDeps.centerImage,
+        imageX,
+        imageY,
+        centerImageSize,
+        centerImageSize
+      );
+      
+      ctx.restore();
+      
+      // Добавляем круглую обводку для центрального изображения
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, centerImageSize / 2, 0, Math.PI * 2);
+      ctx.strokeStyle = renderDeps.borderColor;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+      
+      console.log('🎯 CustomWheel: Центральное изображение отрисовано');
+    }
+
+  }, [renderDeps]);
 
   // Запуск анимации вращения
   useEffect(() => {
     if (mustStartSpinning && !isSpinning) {
       setIsSpinning(true);
       
+      console.log(`🎯 CustomWheel: Начинаем вращение для приза ${prizeNumber}`);
+      console.log(`🎯 CustomWheel: Название приза: "${data[prizeNumber]?.option}"`);
+      console.log(`🎯 CustomWheel: Всего сегментов: ${data.length}`);
+      console.log(`🎯 CustomWheel: Текущая позиция: ${currentRotation}`);
+      
       // Вычисляем финальный угол для нужного сегмента
       const anglePerSegment = (Math.PI * 2) / data.length;
-      const targetAngle = -(prizeNumber * anglePerSegment) + (anglePerSegment / 2);
+      
+      // ИСПРАВЛЕННЫЙ РАСЧЕТ: Позиционируем сегмент точно под стрелкой
+      // Стрелка указывает вверх (угол 3π/2 или -π/2)
+      // Нужно, чтобы ЦЕНТР выбранного сегмента был точно под стрелкой
+      
+      // Угол центра сегмента в "нулевой" позиции (когда рулетка не повернута)
+      const segmentCenterAngle = (prizeNumber * anglePerSegment) + (anglePerSegment / 2);
+      
+      // Добавляем небольшую случайность в пределах ±10% от размера сегмента
+      // чтобы рулетка не останавливалась в одном и том же месте
+      const randomOffset = (Math.random() - 0.5) * anglePerSegment * 0.2; // ±10% от размера сегмента
+      
+      // Целевой угол поворота: чтобы центр сегмента был под стрелкой (вверху)
+      // Стрелка находится в позиции -π/2 (или 3π/2), поэтому:
+      const targetAngle = (-Math.PI / 2) - segmentCenterAngle + randomOffset;
+      
       const spins = 5; // Количество полных оборотов
+      
+      // Добавляем текущую позицию к финальному углу
       const finalRotation = currentRotation + (Math.PI * 2 * spins) + targetAngle;
+      
+      console.log(`🎯 CustomWheel: Угол на сегмент: ${anglePerSegment}`);
+      console.log(`🎯 CustomWheel: Угол центра сегмента: ${segmentCenterAngle}`);
+      console.log(`🎯 CustomWheel: Случайное смещение: ${randomOffset} (${(randomOffset / anglePerSegment * 100).toFixed(1)}% от сегмента)`);
+      console.log(`🎯 CustomWheel: Целевой угол: ${targetAngle}`);
+      console.log(`🎯 CustomWheel: Финальный поворот: ${finalRotation}`);
+      console.log(`🎯 CustomWheel: Разница поворота: ${finalRotation - currentRotation}`);
       
       // Анимация
       const duration = 3000; // 3 секунды
@@ -488,13 +737,30 @@ export function CustomWheel({
           requestAnimationFrame(animate);
         } else {
           setIsSpinning(false);
-          onStopSpinning();
+          // Сохраняем финальную позицию рулетки
+          setCurrentRotation(finalRotation);
+          finalRotationRef.current = finalRotation;
+          
+          // Определяем реального победителя на основе финальной позиции
+          const actualWinner = getWinnerFromRotation(finalRotation, data.length);
+          console.log(`🎯 CustomWheel: Анимация завершена, финальная позиция: ${finalRotation}`);
+          console.log(`🎯 CustomWheel: Ожидаемый победитель: ${prizeNumber} (${data[prizeNumber]?.option})`);
+          console.log(`🎯 CustomWheel: Реальный победитель: ${actualWinner} (${data[actualWinner]?.option})`);
+          
+          // Теперь actualWinner должен всегда совпадать с prizeNumber
+          if (actualWinner !== prizeNumber) {
+            console.log(`⚠️ CustomWheel: ВНИМАНИЕ! Расхождение: ожидали ${prizeNumber}, получили ${actualWinner}`);
+          } else {
+            console.log(`✅ CustomWheel: Победитель определен правильно!`);
+          }
+          
+          onStopSpinning(actualWinner);
         }
       };
       
       requestAnimationFrame(animate);
     }
-  }, [mustStartSpinning, isSpinning, prizeNumber, data.length, currentRotation, onStopSpinning]);
+  }, [mustStartSpinning, isSpinning, prizeNumber, data.length, currentRotation, onStopSpinning, getWinnerFromRotation]);
 
   const canvasSize = config.radius * 2 + 60; // Добавляем место для стрелки
 
