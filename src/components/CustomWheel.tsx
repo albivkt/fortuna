@@ -29,6 +29,7 @@ interface CustomWheelProps {
   containerClassName?: string;
   onImagePositionChange?: (segmentIndex: number, position: { x: number; y: number }) => void;
   isEditable?: boolean;
+  randomOffset?: number; // Предварительно вычисленное случайное смещение
 }
 
 export function CustomWheel({
@@ -42,7 +43,8 @@ export function CustomWheel({
   className = '',
   containerClassName = '',
   onImagePositionChange,
-  isEditable = false
+  isEditable = false,
+  randomOffset = 0
 }: CustomWheelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isSpinning, setIsSpinning] = useState(false);
@@ -89,23 +91,31 @@ export function CustomWheel({
     return segmentIndex;
   };
 
-  // Восстанавливаем сохраненную позицию при изменении данных
+  // Восстанавливаем сохраненную позицию только при старте компонента
   useEffect(() => {
     if (finalRotationRef.current !== 0 && !isSpinning) {
       console.log('🔄 CustomWheel: Восстанавливаем сохраненную позицию:', finalRotationRef.current);
       setCurrentRotation(finalRotationRef.current);
     }
-  }, [data, isSpinning]);
+  }, [isSpinning]);
 
-  const sizeConfig = {
-    small: { radius: 120, fontSize: 11, textDistance: 80 },
-    medium: { radius: 160, fontSize: 13, textDistance: 100 },
-    large: { radius: 200, fontSize: 15, textDistance: 130 }
-  };
-
-  const config = sizeConfig[size];
-  const backgroundColor = isPro && customDesign?.backgroundColor ? customDesign.backgroundColor : 'transparent';
-  const borderColor = isPro && customDesign?.borderColor ? customDesign.borderColor : '#ffffff';
+  const config = useMemo(() => {
+    const sizeConfig = {
+      small: { radius: 120, fontSize: 11, textDistance: 80 },
+      medium: { radius: 160, fontSize: 13, textDistance: 100 },
+      large: { radius: 200, fontSize: 15, textDistance: 130 }
+    };
+    return sizeConfig[size];
+  }, [size]);
+  const backgroundColor = useMemo(() => 
+    isPro && customDesign?.backgroundColor ? customDesign.backgroundColor : 'transparent',
+    [isPro, customDesign?.backgroundColor]
+  );
+  
+  const borderColor = useMemo(() => 
+    isPro && customDesign?.borderColor ? customDesign.borderColor : '#ffffff',
+    [isPro, customDesign?.borderColor]
+  );
 
   // Стабилизируем зависимости для useEffect
   const renderDeps = useMemo(() => {
@@ -202,79 +212,56 @@ export function CustomWheel({
     console.groupEnd();
   };
 
+  // Ref для отслеживания предыдущих URL изображений
+  const prevImageUrls = useRef<string[]>([]);
+
   // Загружаем изображения
   useEffect(() => {
+    const currentImageUrls = data.map(segment => segment.image || '');
+    
+    // Проверяем, изменились ли URL изображений
+    const hasChanged = currentImageUrls.length !== prevImageUrls.current.length ||
+      currentImageUrls.some((url, index) => url !== prevImageUrls.current[index]);
+    
+    if (!hasChanged) {
+      return; // Не загружаем если ничего не изменилось
+    }
+    
+    console.log('🔄 CustomWheel: URL изображений изменились, перезагружаем...');
+    prevImageUrls.current = currentImageUrls;
+
     const loadImages = async () => {
       console.group('🔄 CustomWheel: Начинаем загрузку изображений');
       console.log('Общее количество сегментов:', data.length);
       console.log('Сегменты с изображениями:', data.filter(s => s.image).length);
-      console.log('Состояние вращения:', isSpinning);
-      console.log('Текущий поворот:', currentRotation);
-      console.table(data.map((s, i) => ({ 
-        index: i, 
-        hasImage: !!s.image, 
-        imageUrl: s.image?.substring(0, 100) + (s.image && s.image.length > 100 ? '...' : ''),
-        imageLength: s.image?.length || 0
-      })));
       console.groupEnd();
       
       const newImages: { [key: number]: HTMLImageElement } = {};
       
       const imagePromises = data.map((segment, index) => {
         if (segment.image) {
-          console.group(`🖼️ CustomWheel: Загружаем изображение для сегмента ${index}`);
-          console.log('URL:', segment.image);
-          console.log('Тип URL:', typeof segment.image);
-          console.log('Длина URL:', segment.image.length);
-          console.log('Валидный HTTP URL:', segment.image.startsWith('http'));
-          console.log('Валидный HTTPS URL:', segment.image.startsWith('https'));
-          console.log('Валидный data URL:', segment.image.startsWith('data:'));
-          console.log('Пустой URL:', segment.image.trim() === '');
-          console.log('Первые 200 символов:', segment.image.substring(0, 200));
-          console.groupEnd();
-          
           return new Promise<void>((resolve) => {
-            // Сначала пробуем загрузить БЕЗ CORS (обычно работает лучше)
             const img = new Image();
             
             img.onload = () => {
-              console.log(`✅ CustomWheel: Изображение сегмента ${index} загружено успешно`);
-              console.log(`📏 CustomWheel: Размеры изображения ${index}:`, img.width, 'x', img.height);
-              console.log(`📏 CustomWheel: Natural размеры изображения ${index}:`, img.naturalWidth, 'x', img.naturalHeight);
+              console.log(`✅ CustomWheel: Изображение сегмента ${index} загружено`);
               newImages[index] = img;
               resolve();
             };
             
             img.onerror = (error) => {
-              logImageError(error, `Ошибка загрузки изображения сегмента ${index} без CORS`, {
-                'URL изображения': segment.image,
-                'img src': img.src,
-                'img.complete': img.complete,
-                'img.naturalWidth': img.naturalWidth,
-                'img.naturalHeight': img.naturalHeight
-              });
-              
-              // Попробуем загрузить С CORS
               console.log(`🔄 CustomWheel: Пробуем загрузить изображение ${index} с CORS...`);
               const img2 = new Image();
               img2.crossOrigin = 'anonymous';
               
               img2.onload = () => {
                 console.log(`✅ CustomWheel: Изображение сегмента ${index} загружено с CORS`);
-                console.log(`📏 CustomWheel: Размеры изображения ${index} с CORS:`, img2.width, 'x', img2.height);
                 newImages[index] = img2;
                 resolve();
               };
               
               img2.onerror = (error2) => {
-                logImageError(error2, `Ошибка загрузки изображения ${index} с CORS`, {
-                  'URL изображения': segment.image,
-                  'img2 src': img2.src,
-                  'img2.complete': img2.complete
-                });
-                
-                // Последняя попытка - попробуем через прокси API
-                console.log(`🔄 CustomWheel: Последняя попытка - пробуем через прокси API...`);
+                console.log(`🔄 CustomWheel: Пробуем через прокси API...`);
                 tryProxyLoad(segment.image!, index, newImages, resolve);
               };
               
@@ -289,16 +276,10 @@ export function CustomWheel({
 
       await Promise.all(imagePromises);
       
-      console.log('🏁 CustomWheel: Загрузка изображений завершена. Загружено изображений:', Object.keys(newImages).length);
-      console.log('🏁 CustomWheel: Загруженные изображения:', Object.keys(newImages).map(key => ({ 
-        segmentIndex: key, 
-        imageSize: `${newImages[parseInt(key)].width}x${newImages[parseInt(key)].height}` 
-      })));
-      
+      console.log('🏁 CustomWheel: Загрузка изображений завершена. Загружено:', Object.keys(newImages).length);
       setImages(newImages);
     };
 
-    // Только сбрасываем изображения, НЕ сбрасываем поворот рулетки
     setImages({});
     loadImages();
   }, [data]);
@@ -644,10 +625,10 @@ export function CustomWheel({
       const centerImageSize = radius * 0.6;
       console.log('🎯 CustomWheel: centerImageSize =', centerImageSize);
       
-      // ВРЕМЕННО: Убираем маску для тестирования
-      // ctx.beginPath();
-      // ctx.arc(centerX, centerY, centerImageSize / 2, 0, Math.PI * 2);
-      // ctx.clip();
+      // Создаем круглую маску для центрального изображения
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, centerImageSize / 2, 0, Math.PI * 2);
+      ctx.clip();
       
       // Рисуем изображение в центре
       const imageX = centerX - centerImageSize / 2;
@@ -698,13 +679,13 @@ export function CustomWheel({
       // Угол центра сегмента в "нулевой" позиции (когда рулетка не повернута)
       const segmentCenterAngle = (prizeNumber * anglePerSegment) + (anglePerSegment / 2);
       
-      // Добавляем небольшую случайность в пределах ±10% от размера сегмента
+      // Используем предварительно вычисленное случайное смещение
       // чтобы рулетка не останавливалась в одном и том же месте
-      const randomOffset = (Math.random() - 0.5) * anglePerSegment * 0.2; // ±10% от размера сегмента
+      const actualRandomOffset = randomOffset * anglePerSegment; // Применяем к размеру сегмента
       
       // Целевой угол поворота: чтобы центр сегмента был под стрелкой (вверху)
       // Стрелка находится в позиции -π/2 (или 3π/2), поэтому:
-      const targetAngle = (-Math.PI / 2) - segmentCenterAngle + randomOffset;
+      const targetAngle = (-Math.PI / 2) - segmentCenterAngle + actualRandomOffset;
       
       const spins = 5; // Количество полных оборотов
       
@@ -713,7 +694,7 @@ export function CustomWheel({
       
       console.log(`🎯 CustomWheel: Угол на сегмент: ${anglePerSegment}`);
       console.log(`🎯 CustomWheel: Угол центра сегмента: ${segmentCenterAngle}`);
-      console.log(`🎯 CustomWheel: Случайное смещение: ${randomOffset} (${(randomOffset / anglePerSegment * 100).toFixed(1)}% от сегмента)`);
+      console.log(`🎯 CustomWheel: Случайное смещение: ${actualRandomOffset} (${(actualRandomOffset / anglePerSegment * 100).toFixed(1)}% от сегмента)`);
       console.log(`🎯 CustomWheel: Целевой угол: ${targetAngle}`);
       console.log(`🎯 CustomWheel: Финальный поворот: ${finalRotation}`);
       console.log(`🎯 CustomWheel: Разница поворота: ${finalRotation - currentRotation}`);

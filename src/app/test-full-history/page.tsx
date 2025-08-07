@@ -18,7 +18,7 @@ export default function TestFullHistoryPage() {
   const getCurrentPageSpins = () => {
     const startIndex = (currentPage - 1) * itemsPerPage;
     const endIndex = startIndex + itemsPerPage;
-    return spins.slice().reverse().slice(startIndex, endIndex);
+    return spins.slice(startIndex, endIndex);
   };
 
   if (loading) return <div className="p-8">Загрузка...</div>;
@@ -97,8 +97,8 @@ export default function TestFullHistoryPage() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {getCurrentPageSpins().map((spin, index) => {
-                    const actualIndex = (currentPage - 1) * itemsPerPage + index + 1;
-                    const globalIndex = spins.length - actualIndex + 1;
+                    // Простая нумерация: первый спин = номер 1
+                    const globalIndex = (currentPage - 1) * itemsPerPage + index + 1;
                     
                     return (
                       <tr key={spin.id} className="hover:bg-gray-50">

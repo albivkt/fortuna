@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 interface ImageUploadProps {
   onImageSelect: (imageUrl: string | null) => void;
@@ -13,6 +13,17 @@ export default function ImageUpload({ onImageSelect, currentImage, disabled = fa
   const [preview, setPreview] = useState<string | null>(currentImage || null);
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Синхронизируем preview с currentImage при изменении извне
+  useEffect(() => {
+    console.log('🔄 ImageUpload: currentImage изменился:', currentImage);
+    setPreview(currentImage || null);
+    
+    // Очищаем input если изображение убрано
+    if (!currentImage && inputRef.current) {
+      inputRef.current.value = '';
+    }
+  }, [currentImage]);
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();

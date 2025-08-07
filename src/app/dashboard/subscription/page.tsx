@@ -110,30 +110,11 @@ export default function SubscriptionPage() {
     }
   }, [meData, meLoading, router]);
 
-  const handleUpgradeToPro = async () => {
+  const handleUpgradeToPro = (period: 'MONTHLY' | 'YEARLY') => {
     if (!user) return;
-
-    setIsProcessing(true);
     
-    try {
-      // Симуляция процесса оплаты
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Используем GraphQL мутацию для обновления плана в базе данных
-      await upgradeToPro({
-        variables: { period: selectedPlan }
-      });
-      
-      // Также обновляем localStorage для совместимости
-      const updatedUser: User = { ...user, plan: 'pro' as const };
-      setUser(updatedUser);
-      
-    } catch (error) {
-      console.error('Error upgrading to PRO:', error);
-      alert('Произошла ошибка при обработке платежа. Попробуйте еще раз.');
-    } finally {
-      setIsProcessing(false);
-    }
+    // Перенаправляем на страницу оплаты с выбранным периодом
+    router.push(`/payment?period=${period}`);
   };
 
   const handleDowngradeToFree = () => {
@@ -319,18 +300,10 @@ export default function SubscriptionPage() {
               </div>
             ) : (
               <button
-                onClick={handleUpgradeToPro}
-                disabled={isProcessing}
-                className="w-full bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => handleUpgradeToPro('MONTHLY')}
+                className="w-full bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition-colors font-medium"
               >
-                {isProcessing ? (
-                  <div className="flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                    Обработка...
-                  </div>
-                ) : (
-                  'Обновить до PRO - 400₽/мес'
-                )}
+                Обновить до PRO - 400₽/мес
               </button>
             )}
           </div>
@@ -401,18 +374,10 @@ export default function SubscriptionPage() {
               </div>
             ) : (
               <button
-                onClick={handleUpgradeToPro}
-                disabled={isProcessing}
-                className="w-full bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => handleUpgradeToPro('YEARLY')}
+                className="w-full bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition-colors font-medium"
               >
-                {isProcessing ? (
-                  <div className="flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                    Обработка...
-                  </div>
-                ) : (
-                  'Обновить до PRO - 4000₽/год'
-                )}
+                Обновить до PRO - 4000₽/год
               </button>
             )}
           </div>

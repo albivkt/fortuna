@@ -264,18 +264,6 @@ export default function CreateRoulettePage() {
               >
                 Назад к панели
               </Link>
-              {user?.plan !== 'pro' && (
-                <button
-                  onClick={() => {
-                    const updatedUser = { ...user, plan: 'pro' as 'free' | 'pro' };
-                    setUser(updatedUser);
-                    console.log('🎉 Пользователь обновлен до PRO плана для тестирования');
-                  }}
-                  className="bg-yellow-500/20 text-yellow-300 px-4 py-2 rounded-lg hover:bg-yellow-500/30 transition-colors border border-yellow-400/30 text-sm"
-                >
-                  Тест PRO
-                </button>
-              )}
               <button
                 onClick={() => setIsPreviewMode(!isPreviewMode)}
                 className="bg-gray-700/50 text-gray-300 px-4 py-2 rounded-lg hover:bg-gray-600/50 hover:text-white transition-colors border border-gray-600"
@@ -323,6 +311,7 @@ export default function CreateRoulettePage() {
                       customDesign={customDesign}
                       isPro={user?.plan === 'pro'}
                       size="large"
+                      randomOffset={0}
                     />
                   </div>
                   <button
@@ -379,26 +368,18 @@ export default function CreateRoulettePage() {
                     {segments.map((segment, index) => (
                       <div key={index} className="bg-gray-700/50 border border-gray-600/30 rounded-xl p-4 backdrop-blur-sm">
                         <div className="flex items-center space-x-3 mb-3">
-                          <div
-                            className="w-8 h-8 rounded-full cursor-pointer flex-shrink-0 border-2 border-gray-500"
-                            style={{ 
-                              backgroundColor: segment.image ? 'transparent' : segment.color,
-                              backgroundImage: segment.image ? `url(${segment.image})` : 'none',
-                              backgroundSize: 'cover',
-                              backgroundPosition: 'center'
-                            }}
-                            onClick={() => {
-                              if (!segment.image) {
-                                const input = document.createElement('input');
-                                input.type = 'color';
-                                input.value = segment.color;
-                                input.onchange = (e) => updateSegment(index, 'color', (e.target as HTMLInputElement).value);
-                                input.click();
-                              }
-                            }}
-                          >
+                          <div className="relative">
+                            <div
+                              className="w-8 h-8 rounded-full flex-shrink-0 border-2 border-gray-500"
+                              style={{ 
+                                backgroundColor: segment.image ? 'transparent' : segment.color,
+                                backgroundImage: segment.image ? `url(${segment.image})` : 'none',
+                                backgroundSize: 'cover',
+                                backgroundPosition: 'center'
+                              }}
+                            />
                             {segment.image && (
-                              <div className="w-full h-full rounded-full bg-black bg-opacity-50 flex items-center justify-center text-white text-xs">
+                              <div className="absolute inset-0 w-full h-full rounded-full bg-black bg-opacity-50 flex items-center justify-center text-white text-xs pointer-events-none">
                                 IMG
                               </div>
                             )}
@@ -558,6 +539,7 @@ export default function CreateRoulettePage() {
                         customDesign={customDesign}
                         isPro={user?.plan === 'pro'}
                         size="medium"
+                        randomOffset={0}
                       />
                     </div>
                   </div>

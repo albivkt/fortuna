@@ -1,10 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation, useQuery, useApolloClient } from '@apollo/client';
+import { useQuery } from '@apollo/client';
 import { gql } from '@apollo/client';
 import { useRouter } from 'next/navigation';
-import { updateUser } from '@/lib/user';
 
 const GET_PLAN_LIMITS = gql`
   query GetPlanLimits {
@@ -23,19 +22,7 @@ const GET_PLAN_LIMITS = gql`
   }
 `;
 
-const UPGRADE_TO_PRO = gql`
-  mutation UpgradeToPro($period: String!) {
-    upgradeToPro(period: $period) {
-      id
-      plan
-      status
-      amount
-      period
-      startDate
-      endDate
-    }
-  }
-`;
+
 
 interface PricingPlansProps {
   onClose?: () => void;
@@ -43,53 +30,15 @@ interface PricingPlansProps {
 
 export default function PricingPlans({ onClose }: PricingPlansProps) {
   const [selectedPeriod, setSelectedPeriod] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
-  const [isUpgrading, setIsUpgrading] = useState(false);
   const router = useRouter();
-  const client = useApolloClient();
 
   const { data, loading, refetch } = useQuery(GET_PLAN_LIMITS, {
     errorPolicy: 'ignore' // Игнорируем ошибки GraphQL для отображения статичной версии
   });
-  
-  const [upgradeToPro] = useMutation(UPGRADE_TO_PRO, {
-    onCompleted: (data) => {
-      console.log('✅ PRO upgrade completed:', data);
-      
-      // Обновляем localStorage для совместимости
-      updateUser({ plan: 'pro' });
-      
-      // Очищаем весь кэш Apollo для обновления всех компонентов
-      client.resetStore().then(() => {
-        console.log('🔄 Apollo cache reset after PRO upgrade');
-      });
-      
-      alert('Поздравляем! Вы успешно обновились до PRO тарифа!');
-      
-      // Перенаправляем в дашборд
-      if (onClose) {
-        onClose();
-      } else {
-        router.push('/dashboard');
-      }
-    },
-    onError: (error) => {
-      console.error('❌ Error upgrading to PRO:', error);
-      alert('Ошибка при обновлении тарифа: ' + error.message);
-    }
-  });
 
-  const handleUpgrade = async () => {
-    try {
-      setIsUpgrading(true);
-      await upgradeToPro({
-        variables: { period: selectedPeriod }
-      });
-    } catch (error: any) {
-      console.error('Ошибка при обновлении тарифа:', error);
-      // Ошибка уже обработана в onError
-    } finally {
-      setIsUpgrading(false);
-    }
+  const handleUpgrade = () => {
+    // Перенаправляем на страницу оплаты с выбранным периодом
+    router.push(`/payment?period=${selectedPeriod}`);
   };
 
   // Показываем статичную версию, если данные не загружены
@@ -265,10 +214,9 @@ export default function PricingPlans({ onClose }: PricingPlansProps) {
           ) : (
             <button
               onClick={handleUpgrade}
-              disabled={isUpgrading}
-              className="w-full bg-gradient-to-r from-orange-400 to-pink-400 text-white py-3 px-6 rounded-lg font-medium hover:from-orange-500 hover:to-pink-500 transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
+              className="w-full bg-gradient-to-r from-orange-400 to-pink-400 text-white py-3 px-6 rounded-lg font-medium hover:from-orange-500 hover:to-pink-500 transition-all transform hover:scale-105 shadow-lg"
             >
-              {isUpgrading ? 'Обновление...' : `Обновиться до PRO`}
+              Обновиться до PRO
             </button>
           )}
         </div>

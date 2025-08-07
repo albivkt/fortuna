@@ -27,9 +27,71 @@ export default function RoulettePage() {
   const [hasJoined, setHasJoined] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [showFullHistory, setShowFullHistory] = useState(false);
+  const [isSpinning, setIsSpinning] = useState(false); // Добавляем флаг для контроля состояния вращения
+  const [randomOffset, setRandomOffset] = useState(0); // Сохраняем случайное смещение для стабильности
+
+  // Ключи для localStorage
+  const spinStateKey = `roulette_${wheelId}_spin_state`;
+  const participantStateKey = `roulette_${wheelId}_participant_state`;
 
 
   const wheel = wheelQueryData?.wheel;
+
+  // Функции для работы с localStorage
+  const saveSpinState = (state: {
+    mustSpin: boolean;
+    isSpinning: boolean;
+    prizeNumber: number;
+    randomOffset: number;
+    winner: string | null;
+  }) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(spinStateKey, JSON.stringify(state));
+    }
+  };
+
+  const loadSpinState = () => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(spinStateKey);
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (error) {
+          console.error('Error parsing saved spin state:', error);
+        }
+      }
+    }
+    return null;
+  };
+
+  const clearSpinState = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(spinStateKey);
+    }
+  };
+
+  const saveParticipantState = (state: {
+    participantName: string;
+    hasJoined: boolean;
+  }) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(participantStateKey, JSON.stringify(state));
+    }
+  };
+
+  const loadParticipantState = () => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(participantStateKey);
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (error) {
+          console.error('Error parsing saved participant state:', error);
+        }
+      }
+    }
+    return null;
+  };
 
   // Функция для получения или создания пользователя
   const getOrCreateUser = () => {
@@ -52,6 +114,38 @@ export default function RoulettePage() {
     setUser(currentUser);
     console.log('👤 Current user in roulette page:', currentUser);
     
+    // Восстанавливаем состояние участника
+    const savedParticipantState = loadParticipantState();
+    if (savedParticipantState) {
+      console.log('🔄 Восстанавливаем состояние участника:', savedParticipantState);
+      setParticipantName(savedParticipantState.participantName || '');
+      setHasJoined(savedParticipantState.hasJoined || false);
+    }
+
+    // Восстанавливаем состояние вращения только если рулетка загружена
+    if (wheel) {
+      const savedSpinState = loadSpinState();
+      if (savedSpinState) {
+        console.log('🔄 Восстанавливаем состояние вращения:', savedSpinState);
+        
+        // Проверяем, что состояние не завершенное (если есть winner, очищаем состояние)
+        if (savedSpinState.winner) {
+          console.log('🏁 Найден завершенный розыгрыш, отображаем результат');
+          setWinner(savedSpinState.winner);
+          setMustSpin(false);
+          setIsSpinning(false);
+          setPrizeNumber(savedSpinState.prizeNumber || 0);
+          setRandomOffset(savedSpinState.randomOffset || 0);
+        } else if (savedSpinState.mustSpin || savedSpinState.isSpinning) {
+          console.log('🎯 Найдено активное вращение, восстанавливаем состояние');
+          setPrizeNumber(savedSpinState.prizeNumber || 0);
+          setRandomOffset(savedSpinState.randomOffset || 0);
+          setMustSpin(savedSpinState.mustSpin || false);
+          setIsSpinning(savedSpinState.isSpinning || false);
+        }
+      }
+    }
+    
     // Отладка данных спинов
     if (wheel?.spins) {
       console.log('🔍 Данные спинов:', wheel.spins);
@@ -65,16 +159,34 @@ export default function RoulettePage() {
         });
       });
     }
-  }, [wheel]);
+  }, [wheel, wheelId]);
 
 
 
   const handleSpinClick = () => {
-    if (!mustSpin && wheel) {
+    if (!mustSpin && !isSpinning && wheel) {
       const newPrizeNumber = Math.floor(Math.random() * wheel.segments.length);
-      setPrizeNumber(newPrizeNumber);
-      setMustSpin(true);
+      const newRandomOffset = (Math.random() - 0.5) * 0.2; // Генерируем случайное смещение один раз
+      
+      console.log(`🎯 Новое вращение: выбран приз ${newPrizeNumber} (${wheel.segments[newPrizeNumber]?.option})`);
+      console.log(`🎯 Случайное смещение: ${newRandomOffset}`);
+      
+      // Очищаем предыдущий результат
       setWinner(null);
+      
+      setPrizeNumber(newPrizeNumber);
+      setRandomOffset(newRandomOffset);
+      setMustSpin(true);
+      setIsSpinning(true);
+
+      // Сохраняем состояние вращения
+      saveSpinState({
+        mustSpin: true,
+        isSpinning: true,
+        prizeNumber: newPrizeNumber,
+        randomOffset: newRandomOffset,
+        winner: null
+      });
     }
   };
 
@@ -82,6 +194,7 @@ export default function RoulettePage() {
     if (!wheel) return;
     
     setMustSpin(false);
+    setIsSpinning(false); // Сбрасываем флаг вращения
     
     // Используем actualWinnerIndex если он передан, иначе используем prizeNumber
     const winnerIndex = actualWinnerIndex !== undefined ? actualWinnerIndex : prizeNumber;
@@ -113,6 +226,15 @@ export default function RoulettePage() {
     });
     
     setWinner(`${winnerName} выиграл: ${winningSegment.option}`);
+
+    // Сохраняем финальное состояние с результатом
+    saveSpinState({
+      mustSpin: false,
+      isSpinning: false,
+      prizeNumber: winnerIndex,
+      randomOffset: randomOffset,
+      winner: `${winnerName} выиграл: ${winningSegment.option}`
+    });
 
     try {
       // Отправляем результат через GraphQL
@@ -147,6 +269,12 @@ export default function RoulettePage() {
   const handleJoinRoulette = () => {
     if (participantName.trim()) {
       setHasJoined(true);
+      
+      // Сохраняем состояние участника
+      saveParticipantState({
+        participantName: participantName.trim(),
+        hasJoined: true
+      });
       
       // Создаем уведомление о новом участнике
       const currentUser = getOrCreateUser();
@@ -314,6 +442,7 @@ export default function RoulettePage() {
                           customDesign={wheel.customDesign}
                           isPro={(wheel.user as any)?.plan?.toLowerCase() === 'pro'}
                           size="large"
+                          randomOffset={randomOffset}
                         />
                       );
                     })()
@@ -354,10 +483,10 @@ export default function RoulettePage() {
               {hasJoined && (
                 <button
                   onClick={handleSpinClick}
-                  disabled={mustSpin}
+                  disabled={mustSpin || isSpinning}
                   className="bg-gradient-to-r from-orange-400 to-pink-400 text-white px-12 py-4 rounded-xl text-xl font-bold hover:from-orange-500 hover:to-pink-500 transition-all transform hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed min-w-[250px]"
                 >
-                  {mustSpin ? 'Крутится...' : 'Крутить колесо!'}
+                  {mustSpin || isSpinning ? 'Крутится...' : 'Крутить колесо!'}
                 </button>
               )}
 
@@ -418,7 +547,7 @@ export default function RoulettePage() {
             ) : (
               <div className="space-y-4">
                 <div className={`space-y-4 ${showFullHistory && wheel.spins.length > 10 ? 'max-h-96 overflow-y-auto' : ''}`}>
-                  {(showFullHistory ? wheel.spins.slice().reverse() : wheel.spins.slice(-10).reverse()).map((spin, index) => {
+                  {(showFullHistory ? wheel.spins : wheel.spins.slice(-10)).map((spin, index) => {
                     // Отладочная информация
                     console.log('🔍 Отображение спина:', {
                       id: spin.id,
@@ -460,7 +589,7 @@ export default function RoulettePage() {
                           </div>
                         </div>
                         <div className="text-gray-500 text-sm">
-                          #{showFullHistory ? wheel.spins.length - index : wheel.spins.length - index}
+                          #{showFullHistory ? index + 1 : wheel.spins.length - 10 + index + 1}
                         </div>
                       </div>
                     );

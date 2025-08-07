@@ -16,6 +16,7 @@ import {
   UPGRADE_TO_PRO
 } from './queries';
 import { setAuthToken, clearAuthToken } from './client';
+import { gql } from 'graphql-tag';
 
 // Типы для TypeScript
 export interface WheelSegment {
@@ -368,6 +369,27 @@ export const useUpgradeToPro = () => {
         console.log('🔄 Apollo cache reset after PRO upgrade');
       });
     },
+    errorPolicy: 'all',
+  });
+};
+
+// GraphQL мутация для обновления пользователя
+const UPDATE_USER = gql`
+  mutation UpdateUser($input: UpdateUserInput!) {
+    updateUser(input: $input) {
+      id
+      name
+      email
+      plan
+    }
+  }
+`;
+
+export const useUpdateUser = () => {
+  return useMutation<
+    { updateUser: { id: string; name: string; email: string; plan: string } },
+    { input: { name?: string; email?: string; password?: string } }
+  >(UPDATE_USER, {
     errorPolicy: 'all',
   });
 }; 

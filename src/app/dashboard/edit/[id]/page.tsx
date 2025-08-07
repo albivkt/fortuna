@@ -77,6 +77,21 @@ export default function EditRoulettePage() {
     centerImage: ''
   });
 
+  // Состояния для хранения исходных данных (для сброса изменений)
+  const [originalData, setOriginalData] = useState({
+    rouletteName: '',
+    segments: [
+      { text: 'Приз 1', color: defaultColors[0], image: null as string | null, imagePosition: { x: 0, y: 0 } },
+      { text: 'Приз 2', color: defaultColors[1], image: null as string | null, imagePosition: { x: 0, y: 0 } }
+    ],
+    customDesign: {
+      backgroundColor: 'transparent',
+      borderColor: '#ffffff',
+      textColor: 'white',
+      centerImage: ''
+    }
+  });
+
   useEffect(() => {
     if (meData?.me) {
       // Авторизованный пользователь
@@ -173,18 +188,30 @@ export default function EditRoulettePage() {
         })));
         
         setSegments(transformedSegments);
-      } else {
-        console.log('🔄 Пропускаем загрузку из БД - есть локальные изображения');
-      }
-      
-      // Восстанавливаем кастомный дизайн, если он есть
-      if (wheel.customDesign) {
-        setCustomDesign({
+        
+        // Восстанавливаем кастомный дизайн, если он есть
+        const loadedCustomDesign = wheel.customDesign ? {
           backgroundColor: wheel.customDesign.backgroundColor || 'transparent',
           borderColor: wheel.customDesign.borderColor || '#ffffff',
           textColor: wheel.customDesign.textColor || 'white',
           centerImage: wheel.customDesign.centerImage || ''
+        } : {
+          backgroundColor: 'transparent',
+          borderColor: '#ffffff',
+          textColor: 'white',
+          centerImage: ''
+        };
+        
+        setCustomDesign(loadedCustomDesign);
+
+        // Сохраняем исходные данные для возможности сброса
+        setOriginalData({
+          rouletteName: wheel.title || '',
+          segments: transformedSegments,
+          customDesign: loadedCustomDesign
         });
+      } else {
+        console.log('🔄 Пропускаем загрузку из БД - есть локальные изображения');
       }
     }
   }, [wheelData, user, router, segments.length]);
@@ -221,6 +248,44 @@ export default function EditRoulettePage() {
     const newSegments = [...segments];
     newSegments[index] = { ...newSegments[index], imagePosition: position };
     setSegments(newSegments);
+  };
+
+  const resetChanges = () => {
+    if (window.confirm('Вы уверены, что хотите сбросить дизайн и изображения? Текст сегментов останется без изменений.')) {
+      console.log('🔄 Сбрасываем дизайн и изображения...');
+      
+      // Сбрасываем дизайн к исходному состоянию (включая центральное изображение)
+      const resetDesign = {
+        backgroundColor: 'transparent',
+        borderColor: '#ffffff',
+        textColor: 'white',
+        centerImage: ''
+      };
+      console.log('🎨 Сбрасываем кастомный дизайн:', resetDesign);
+      setCustomDesign(resetDesign);
+      
+      // Убираем ВСЕ изображения из сегментов, но оставляем текст и цвета
+      const resetSegments = segments.map((segment, index) => {
+        console.log(`🔄 Сегмент ${index}: убираем изображение`, { 
+          old: segment.image, 
+          new: null 
+        });
+        return {
+          ...segment,
+          image: null,
+          imagePosition: { x: 0, y: 0 }
+        };
+      });
+      
+      console.log('📝 Обновляем сегменты:', resetSegments.map((s, i) => ({ 
+        index: i, 
+        text: s.text, 
+        hasImage: !!s.image 
+      })));
+      setSegments(resetSegments);
+      
+      console.log('✅ Сброс дизайна завершен');
+    }
   };
 
   const handlePreviewSpin = () => {
@@ -450,6 +515,7 @@ export default function EditRoulettePage() {
                     size="large"
                     isEditable={true}
                     onImagePositionChange={updateImagePosition}
+                    randomOffset={0}
                   />
                 </div>
                 <button
@@ -585,9 +651,9 @@ export default function EditRoulettePage() {
                             <ImageUpload
                               onImageSelect={(imageUrl) => {
                                 console.log('🖼️ Segment image uploaded:', imageUrl);
-                                updateSegment(index, 'image', imageUrl);
+                                updateSegment(index, 'image', imageUrl || null);
                               }}
-                              currentImage={segment.image ? segment.image : undefined}
+                              currentImage={segment.image || undefined}
                             />
                             {segment.image && (
                               <div className="mt-2">
@@ -668,23 +734,31 @@ export default function EditRoulettePage() {
                         <ImageUpload
                           onImageSelect={(imageUrl) => {
                             console.log('🖼️ Center image uploaded:', imageUrl);
-                            setCustomDesign({...customDesign, centerImage: imageUrl});
+                            setCustomDesign({...customDesign, centerImage: imageUrl || ''});
                           }}
-                          currentImage={customDesign.centerImage}
+                          currentImage={customDesign.centerImage || undefined}
                         />
                       </div>
                         </div>
                       </div>
                     )}
 
-                {/* Save Button */}
-                <button
-                  onClick={saveRouletteHandler}
-                  disabled={updating}
-                  className="w-full bg-gradient-to-r from-green-500 to-green-600 text-white py-4 rounded-xl text-lg font-bold hover:from-green-600 hover:to-green-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105"
-                >
-                  {updating ? 'Сохранение...' : 'Сохранить изменения'}
-                </button>
+                {/* Action Buttons */}
+                <div className="grid grid-cols-2 gap-4">
+                  <button
+                    onClick={resetChanges}
+                    className="bg-gradient-to-r from-gray-500 to-gray-600 text-white py-4 rounded-xl text-lg font-bold hover:from-gray-600 hover:to-gray-700 transition-all shadow-lg transform hover:scale-105"
+                  >
+                    Сбросить дизайн
+                  </button>
+                  <button
+                    onClick={saveRouletteHandler}
+                    disabled={updating}
+                    className="bg-gradient-to-r from-green-500 to-green-600 text-white py-4 rounded-xl text-lg font-bold hover:from-green-600 hover:to-green-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105"
+                  >
+                    {updating ? 'Сохранение...' : 'Сохранить изменения'}
+                  </button>
+                </div>
               </div>
 
               {/* Right Column - Preview */}
@@ -707,6 +781,7 @@ export default function EditRoulettePage() {
                           isPro={user?.plan === 'pro'}
                           size="medium"
                           isEditable={false}
+                          randomOffset={0}
                         />
                     </div>
                   </div>

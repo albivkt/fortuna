@@ -28,12 +28,19 @@ interface PublicWheelProps {
 export function PublicWheel({ segments, onSpin, isSpinning, disabled, customDesign, isPro = false }: PublicWheelProps) {
   const [mustStartSpinning, setMustStartSpinning] = useState(false);
   const [prizeNumber, setPrizeNumber] = useState(0);
+  const [randomOffset, setRandomOffset] = useState(0);
 
   const handleSpinClick = () => {
     if (disabled || isSpinning || segments.length === 0) return;
 
     const newPrizeNumber = Math.floor(Math.random() * segments.length);
+    const newRandomOffset = (Math.random() - 0.5) * 0.2;
+    
+    console.log(`🎯 PublicWheel: Выбран приз ${newPrizeNumber} (${segments[newPrizeNumber]?.option})`);
+    console.log(`🎯 PublicWheel: Случайное смещение: ${newRandomOffset}`);
+    
     setPrizeNumber(newPrizeNumber);
+    setRandomOffset(newRandomOffset);
     setMustStartSpinning(true);
   };
 
@@ -71,6 +78,7 @@ export function PublicWheel({ segments, onSpin, isSpinning, disabled, customDesi
           customDesign={customDesign}
           isPro={isPro}
           size="large"
+          randomOffset={randomOffset}
         />
       </div>
       
