@@ -2,11 +2,15 @@
 
 import { useState } from 'react';
 import { useMe } from '@/lib/graphql/hooks';
+import { useMutation } from '@apollo/client';
+import { CREATE_PAYMENT } from '@/lib/graphql/queries';
 
 export default function DebugPaymentPage() {
   const [result, setResult] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const { data: meData, refetch: refetchMe } = useMe();
+  
+  const [createPayment] = useMutation(CREATE_PAYMENT);
 
   const testWebhook = async () => {
     setLoading(true);
@@ -79,6 +83,27 @@ export default function DebugPaymentPage() {
     setLoading(false);
   };
 
+  const testGraphQLPayment = async () => {
+    setLoading(true);
+    try {
+      console.log('🔄 Тест создания платежа через GraphQL...');
+      
+      const response = await createPayment({
+        variables: { period: 'MONTHLY' }
+      });
+      
+      console.log('📋 GraphQL ответ создания платежа:', response);
+      
+      if (response.data?.createPayment) {
+        setResult('✅ Платеж создан через GraphQL!\n' + JSON.stringify(response.data.createPayment, null, 2));
+      }
+    } catch (error) {
+      console.error('❌ Ошибка GraphQL платежа:', error);
+      setResult('❌ Ошибка GraphQL платежа: ' + (error instanceof Error ? error.message : 'Неизвестная ошибка'));
+    }
+    setLoading(false);
+  };
+
   const manualUpgrade = async () => {
     setLoading(true);
     try {
@@ -120,13 +145,21 @@ export default function DebugPaymentPage() {
           </div>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-4 mb-6">
+        <div className="grid md:grid-cols-3 gap-4 mb-6">
           <button
             onClick={testWebhook}
             disabled={loading || !meData?.me?.id}
             className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-medium disabled:opacity-50"
           >
             {loading ? 'Тестируем...' : '🧪 Тест Webhook'}
+          </button>
+
+          <button
+            onClick={testGraphQLPayment}
+            disabled={loading || !meData?.me?.id}
+            className="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg font-medium disabled:opacity-50"
+          >
+            {loading ? 'Создаем...' : '🚀 GraphQL Платеж'}
           </button>
 
           <button

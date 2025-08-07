@@ -15,6 +15,7 @@ import {
   checkSegmentLimits,
   PLAN_PRICES 
 } from '../planLimits';
+import { createPayment, getPayment } from '../yookassa';
 
 // Типы для входных данных
 interface CreateWheelInput {
@@ -78,6 +79,10 @@ interface LoginInput {
 
 interface CreateSubscriptionInput {
   plan: string;
+  period: string;
+}
+
+interface CreatePaymentInput {
   period: string;
 }
 
@@ -968,6 +973,90 @@ export const resolvers = {
         endDate: updatedSubscription.endDate.toISOString(),
         createdAt: updatedSubscription.createdAt.toISOString(),
       };
+    },
+
+    createPayment: async (_: any, { input }: { input: CreatePaymentInput }, context: any) => {
+      const user = await getUserFromContext(context);
+      if (!user) throw new GraphQLError('Authentication required');
+
+      const { period } = input;
+
+      if (!['MONTHLY', 'YEARLY'].includes(period)) {
+        throw new GraphQLError('Invalid period. Must be MONTHLY or YEARLY');
+      }
+
+      try {
+        // Получаем сумму для выбранного периода
+        const amount = PLAN_PRICES.PRO[period as keyof typeof PLAN_PRICES.PRO];
+        const periodText = period === 'YEARLY' ? 'годовая' : 'месячная';
+        
+        // Создаем описание платежа
+        const description = `Подписка GIFTY PRO (${periodText})`;
+        
+        // URL для возврата после оплаты
+        const returnUrl = `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/payment/success-simple`;
+
+        // Метаданные для идентификации платежа
+        const metadata = {
+          userId: user.id,
+          plan: 'PRO',
+          period,
+          userEmail: user.email || ''
+        };
+
+        console.log('🔄 Создание платежа ЮKassa через GraphQL:', {
+          amount,
+          description,
+          returnUrl,
+          metadata
+        });
+
+        // Создаем платеж через ЮKassa
+        const payment = await createPayment(
+          amount,
+          description,
+          returnUrl,
+          metadata
+        );
+
+        console.log('✅ Платеж ЮKassa создан через GraphQL:', payment.id);
+
+        return {
+          paymentId: payment.id,
+          confirmationUrl: payment.confirmation.confirmation_url,
+          amount: payment.amount.value,
+          description: payment.description || description
+        };
+
+      } catch (error) {
+        console.error('❌ Ошибка создания платежа через GraphQL:', error);
+        throw new GraphQLError('Ошибка при создании платежа: ' + (error instanceof Error ? error.message : 'Неизвестная ошибка'));
+      }
+    },
+
+    checkPaymentStatus: async (_: any, { paymentId }: { paymentId: string }, context: any) => {
+      const user = await getUserFromContext(context);
+      if (!user) throw new GraphQLError('Authentication required');
+
+      try {
+        console.log('🔄 Проверка статуса платежа через GraphQL:', paymentId);
+
+        const payment = await getPayment(paymentId);
+
+        console.log('📋 Статус платежа:', payment.status);
+
+        return {
+          id: payment.id,
+          status: payment.status,
+          amount: payment.amount.value,
+          description: payment.description || '',
+          paid: payment.status === 'succeeded'
+        };
+
+      } catch (error) {
+        console.error('❌ Ошибка проверки платежа через GraphQL:', error);
+        throw new GraphQLError('Ошибка при проверке платежа: ' + (error instanceof Error ? error.message : 'Неизвестная ошибка'));
+      }
     },
   },
 

@@ -8,6 +8,7 @@ import { gql } from '@apollo/client';
 import { useMe } from '@/lib/graphql/hooks';
 import { updateUser } from '@/lib/user';
 import { PLAN_PRICES } from '@/lib/planLimits';
+import { CREATE_PAYMENT } from '@/lib/graphql/queries';
 
 const UPGRADE_TO_PRO = gql`
   mutation UpgradeToPro($period: String!) {
@@ -40,24 +41,17 @@ function PaymentPageContent() {
 
   const { data: meData, loading: meLoading } = useMe();
   
-  const [upgradeToPro] = useMutation(UPGRADE_TO_PRO, {
+  const [createPayment] = useMutation(CREATE_PAYMENT, {
     onCompleted: (data) => {
-      console.log('✅ PRO upgrade completed:', data);
+      console.log('✅ Платеж создан через GraphQL:', data);
       
-      // Обновляем localStorage для совместимости
-      updateUser({ plan: 'pro' });
-      
-      // Очищаем весь кэш Apollo для обновления всех компонентов
-      client.resetStore().then(() => {
-        console.log('🔄 Apollo cache reset after PRO upgrade');
-      });
-      
-      alert('🎉 Поздравляем! Оплата прошла успешно. Вы получили PRO подписку!');
-      router.push('/dashboard');
+      // Перенаправляем пользователя на страницу оплаты ЮKassa
+      window.location.href = data.createPayment.confirmationUrl;
     },
     onError: (error) => {
-      console.error('❌ Error upgrading to PRO:', error);
-      alert('Ошибка при активации подписки: ' + error.message);
+      console.error('❌ Ошибка создания платежа через GraphQL:', error);
+      alert('Ошибка при создании платежа: ' + error.message);
+      setIsProcessing(false);
     }
   });
 
@@ -102,31 +96,14 @@ function PaymentPageContent() {
     setIsProcessing(true);
     
     try {
-      console.log('🔄 Создание платежа через ЮKassa...');
+      console.log('🔄 Создание платежа через GraphQL...');
       
-      // Создаем платеж через ЮKassa API
-      const response = await fetch('/api/yookassa/create-payment', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          period,
-          userId: meData.me.id,
-          userEmail: meData.me.email || formData.email
-        }),
+      // Создаем платеж через GraphQL
+      await createPayment({
+        variables: { period }
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Ошибка создания платежа');
-      }
-
-      console.log('✅ Платеж создан, перенаправляем на ЮKassa:', data.confirmationUrl);
-
-      // Перенаправляем пользователя на страницу оплаты ЮKassa
-      window.location.href = data.confirmationUrl;
+      
+      // Обработка успеха происходит в onCompleted колбеке
       
     } catch (error) {
       console.error('❌ Ошибка создания платежа:', error);
@@ -311,7 +288,6 @@ function PaymentPageContent() {
                   ) : (
                     <>
                       <span>Оплатить {amount / 100} ₽</span>
-                      <span className="text-sm opacity-80 ml-2">через ЮKassa</span>
                     </>
                   )}
                 </button>

@@ -413,4 +413,27 @@ export const UPGRADE_TO_PRO = gql`
       endDate
     }
   }
+`;
+
+export const CREATE_PAYMENT = gql`
+  mutation CreatePayment($period: String!) {
+    createPayment(input: { period: $period }) {
+      paymentId
+      confirmationUrl
+      amount
+      description
+    }
+  }
+`;
+
+export const CHECK_PAYMENT_STATUS = gql`
+  query CheckPaymentStatus($paymentId: String!) {
+    checkPaymentStatus(paymentId: $paymentId) {
+      id
+      status
+      amount
+      description
+      paid
+    }
+  }
 `; 

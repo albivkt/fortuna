@@ -156,6 +156,25 @@ export const typeDefs = gql`
     period: String!
   }
 
+  input CreatePaymentInput {
+    period: String!
+  }
+
+  type PaymentResult {
+    paymentId: String!
+    confirmationUrl: String!
+    amount: String!
+    description: String!
+  }
+
+  type PaymentStatus {
+    id: String!
+    status: String!
+    amount: String!
+    description: String
+    paid: Boolean!
+  }
+
   type Query {
     me: User
     wheels: [Wheel!]!
@@ -179,5 +198,7 @@ export const typeDefs = gql`
     createSubscription(input: CreateSubscriptionInput!): Subscription!
     cancelSubscription(subscriptionId: ID!): Subscription!
     upgradeToPro(period: String!): Subscription!
+    createPayment(input: CreatePaymentInput!): PaymentResult!
+    checkPaymentStatus(paymentId: String!): PaymentStatus!
   }
 `; 
