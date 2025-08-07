@@ -7,6 +7,7 @@ import { useMutation, useQuery, useApolloClient } from '@apollo/client';
 import { gql } from '@apollo/client';
 import { useMe } from '@/lib/graphql/hooks';
 import { updateUser } from '@/lib/user';
+import { PLAN_PRICES } from '@/lib/planLimits';
 
 // GraphQL запросы и мутации
 const GET_PLAN_LIMITS = gql`
@@ -249,7 +250,7 @@ export default function SubscriptionPage() {
             
             <div className="text-center mb-6">
               <h3 className="text-2xl font-bold text-gray-900 mb-2">PRO Месячный</h3>
-              <div className="text-4xl font-bold text-purple-600 mb-2">400₽</div>
+                              <div className="text-4xl font-bold text-purple-600 mb-2">{PLAN_PRICES.PRO.MONTHLY / 100}₽</div>
               <p className="text-gray-600">в месяц</p>
             </div>
             
@@ -303,7 +304,7 @@ export default function SubscriptionPage() {
                 onClick={() => handleUpgradeToPro('MONTHLY')}
                 className="w-full bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition-colors font-medium"
               >
-                Обновить до PRO - 400₽/мес
+                Обновить до PRO - {PLAN_PRICES.PRO.MONTHLY / 100}₽/мес
               </button>
             )}
           </div>
@@ -320,10 +321,10 @@ export default function SubscriptionPage() {
             
             <div className="text-center mb-6">
               <h3 className="text-2xl font-bold text-gray-900 mb-2">PRO Годовой</h3>
-              <div className="text-4xl font-bold text-purple-600 mb-2">4000₽</div>
+                              <div className="text-4xl font-bold text-purple-600 mb-2">{PLAN_PRICES.PRO.YEARLY / 100}₽</div>
               <p className="text-gray-600">в год</p>
               <p className="text-sm text-green-600 font-medium mt-1">
-                Экономия 17% (333₽/мес)
+                Экономия 17% ({Math.round((PLAN_PRICES.PRO.YEARLY / 100) / 12)}₽/мес)
               </p>
             </div>
             
@@ -377,7 +378,7 @@ export default function SubscriptionPage() {
                 onClick={() => handleUpgradeToPro('YEARLY')}
                 className="w-full bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition-colors font-medium"
               >
-                Обновить до PRO - 4000₽/год
+                Обновить до PRO - {PLAN_PRICES.PRO.YEARLY / 100}₽/год
               </button>
             )}
           </div>

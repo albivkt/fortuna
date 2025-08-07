@@ -386,13 +386,14 @@ export default function Home() {
               <h4 className="font-semibold mb-4">Компания</h4>
               <ul className="space-y-2 text-gray-400">
                 <li><a href="#" className="hover:text-white transition-colors">О нас</a></li>
+                <li><a href="/requisites" className="hover:text-white transition-colors">Реквизиты</a></li>
                 <li><a href="#" className="hover:text-white transition-colors">Блог</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Карьера</a></li>
               </ul>
             </div>
           </div>
           <div className="border-t border-gray-800 mt-8 pt-8 text-center text-gray-400">
             <p>&copy; 2025 Gifty. Все права защищены.</p>
+            <p className="text-sm mt-2">ИП Данилова Ольга, ИНН: 370260325067</p>
           </div>
         </div>
       </footer>

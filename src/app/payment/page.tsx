@@ -7,6 +7,7 @@ import { useMutation, useApolloClient } from '@apollo/client';
 import { gql } from '@apollo/client';
 import { useMe } from '@/lib/graphql/hooks';
 import { updateUser } from '@/lib/user';
+import { PLAN_PRICES } from '@/lib/planLimits';
 
 const UPGRADE_TO_PRO = gql`
   mutation UpgradeToPro($period: String!) {
@@ -24,14 +25,8 @@ const UPGRADE_TO_PRO = gql`
 
 function PaymentPageContent() {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('card');
   const [formData, setFormData] = useState({
-    cardNumber: '',
-    expiryDate: '',
-    cvv: '',
-    cardholderName: '',
-    email: '',
-    phone: ''
+    email: ''
   });
   
   const router = useRouter();
@@ -40,7 +35,7 @@ function PaymentPageContent() {
   
   // Получаем параметры из URL
   const period = searchParams.get('period') || 'MONTHLY';
-  const amount = period === 'YEARLY' ? 4000 : 400;
+  const amount = PLAN_PRICES.PRO[period as keyof typeof PLAN_PRICES.PRO]; // сумма в копейках
   const periodText = period === 'YEARLY' ? 'годовая' : 'месячная';
 
   const { data: meData, loading: meLoading } = useMe();
@@ -107,17 +102,35 @@ function PaymentPageContent() {
     setIsProcessing(true);
     
     try {
-      // Симуляция процесса оплаты
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      console.log('🔄 Создание платежа через ЮKassa...');
       
-      // После "успешной оплаты" активируем PRO подписку
-      await upgradeToPro({
-        variables: { period }
+      // Создаем платеж через ЮKassa API
+      const response = await fetch('/api/yookassa/create-payment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          period,
+          userId: meData.me.id,
+          userEmail: meData.me.email || formData.email
+        }),
       });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Ошибка создания платежа');
+      }
+
+      console.log('✅ Платеж создан, перенаправляем на ЮKassa:', data.confirmationUrl);
+
+      // Перенаправляем пользователя на страницу оплаты ЮKassa
+      window.location.href = data.confirmationUrl;
       
     } catch (error) {
-      console.error('Error processing payment:', error);
-      alert('Произошла ошибка при обработке платежа. Попробуйте еще раз.');
+      console.error('❌ Ошибка создания платежа:', error);
+      alert('Произошла ошибка при создании платежа: ' + (error instanceof Error ? error.message : 'Неизвестная ошибка'));
       setIsProcessing(false);
     }
   };
@@ -242,94 +255,29 @@ function PaymentPageContent() {
 
             {/* Payment Form */}
             <div className="bg-gray-800/80 backdrop-blur-sm rounded-xl shadow-lg p-6 border border-gray-700/50">
-              <h2 className="text-xl font-bold text-white mb-6">Способ оплаты</h2>
+              <h2 className="text-xl font-bold text-white mb-6">Оплата</h2>
               
               <form onSubmit={handlePayment} className="space-y-6">
-                {/* Payment Method Selection */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-3">
-                    Выберите способ оплаты
-                  </label>
-                  <div className="space-y-2">
-                    <label className="flex items-center">
-                      <input
-                        type="radio"
-                        name="paymentMethod"
-                        value="card"
-                        checked={paymentMethod === 'card'}
-                        onChange={(e) => setPaymentMethod(e.target.value)}
-                        className="mr-3"
-                      />
-                      <span className="text-gray-300">Банковская карта</span>
-                    </label>
+                {/* Payment Info */}
+                <div className="bg-gray-700/30 rounded-lg p-4 border border-gray-600/30">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-gray-300">Сумма к оплате:</span>
+                    <span className="text-2xl font-bold text-white">{amount / 100} ₽</span>
+                  </div>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-gray-300">Период:</span>
+                    <span className="text-orange-300 font-medium">{periodText}</span>
+                  </div>
+                  <div className="text-sm text-gray-400 border-t border-gray-600/30 pt-3">
+                    <p className="flex items-center">
+                      <svg className="w-4 h-4 text-green-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Безопасная оплата через ЮKassa
+                    </p>
+                    <p className="mt-1 ml-6">Принимаем карты Visa, MasterCard, МИР</p>
                   </div>
                 </div>
-
-                {/* Card Details */}
-                {paymentMethod === 'card' && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">
-                        Номер карты
-                      </label>
-                      <input
-                        type="text"
-                        name="cardNumber"
-                        value={formData.cardNumber}
-                        onChange={handleInputChange}
-                        placeholder="1234 5678 9012 3456"
-                        className="w-full px-3 py-3 bg-gray-700/50 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400"
-                        required
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">
-                          Срок действия
-                        </label>
-                        <input
-                          type="text"
-                          name="expiryDate"
-                          value={formData.expiryDate}
-                          onChange={handleInputChange}
-                          placeholder="MM/YY"
-                          className="w-full px-3 py-3 bg-gray-700/50 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">
-                          CVV
-                        </label>
-                        <input
-                          type="text"
-                          name="cvv"
-                          value={formData.cvv}
-                          onChange={handleInputChange}
-                          placeholder="123"
-                          className="w-full px-3 py-3 bg-gray-700/50 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400"
-                          required
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">
-                        Имя держателя карты
-                      </label>
-                      <input
-                        type="text"
-                        name="cardholderName"
-                        value={formData.cardholderName}
-                        onChange={handleInputChange}
-                        placeholder="IVAN IVANOV"
-                        className="w-full px-3 py-3 bg-gray-700/50 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400"
-                        required
-                      />
-                    </div>
-                  </>
-                )}
 
                 {/* Contact Information */}
                 <div>
@@ -344,20 +292,9 @@ function PaymentPageContent() {
                     className="w-full px-3 py-3 bg-gray-700/50 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400"
                     required
                   />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Телефон (опционально)
-                  </label>
-                  <input
-                    type="tel"
-                    name="phone"
-                    value={formData.phone}
-                    onChange={handleInputChange}
-                    placeholder="+7 (999) 123-45-67"
-                    className="w-full px-3 py-3 bg-gray-700/50 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400"
-                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    На этот email будет отправлен чек об оплате
+                  </p>
                 </div>
 
                 {/* Pay Button */}
@@ -369,10 +306,13 @@ function PaymentPageContent() {
                   {isProcessing ? (
                     <div className="flex items-center justify-center">
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white mr-3"></div>
-                      Обработка платежа...
+                      Создание платежа...
                     </div>
                   ) : (
-                    `Оплатить ${amount} ₽`
+                    <>
+                      <span>Оплатить {amount / 100} ₽</span>
+                      <span className="text-sm opacity-80 ml-2">через ЮKassa</span>
+                    </>
                   )}
                 </button>
 

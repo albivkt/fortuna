@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useQuery } from '@apollo/client';
 import { gql } from '@apollo/client';
 import { useRouter } from 'next/navigation';
+import { PLAN_PRICES } from '@/lib/planLimits';
 
 const GET_PLAN_LIMITS = gql`
   query GetPlanLimits {
@@ -46,8 +47,8 @@ export default function PricingPlans({ onClose }: PricingPlansProps) {
   const planExpiresAt = data?.me?.planExpiresAt;
   const limits = data?.planLimits;
 
-  const monthlyPrice = 400;
-  const yearlyPrice = 4000;
+  const monthlyPrice = PLAN_PRICES.PRO.MONTHLY / 100; // конвертируем из копеек в рубли
+  const yearlyPrice = PLAN_PRICES.PRO.YEARLY / 100; // конвертируем из копеек в рубли
   const yearlyMonthlyPrice = Math.round(yearlyPrice / 12);
 
   return (
