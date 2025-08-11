@@ -4,6 +4,9 @@ import { prisma } from '@/lib/prisma';
 
 export async function POST(request: NextRequest) {
   try {
+    // Логируем заголовки для диагностики
+    console.log('🔔 Webhook заголовки:', Object.fromEntries(request.headers.entries()));
+    
     const webhookData: YooKassaWebhookData = await request.json();
     
     console.log('🔔 Получено уведомление от ЮKassa:', JSON.stringify(webhookData, null, 2));
@@ -41,10 +44,17 @@ export async function POST(request: NextRequest) {
 
 async function handleSuccessfulPayment(paymentObject: any) {
   try {
-    const { id: paymentId, metadata, amount } = paymentObject;
+    console.log('🔍 Начинаем обработку успешного платежа...');
+    console.log('🔍 Объект платежа:', JSON.stringify(paymentObject, null, 2));
+    
+    const { id: paymentId, metadata, amount, status } = paymentObject;
+    
+    console.log('🔍 Проверяем статус платежа:', status);
+    console.log('🔍 Проверяем метаданные:', metadata);
     
     if (!metadata || !metadata.userId) {
       console.error('❌ Отсутствуют метаданные в платеже:', paymentId);
+      console.error('❌ Доступные поля:', Object.keys(paymentObject));
       return;
     }
 
@@ -59,6 +69,18 @@ async function handleSuccessfulPayment(paymentObject: any) {
       amount: paymentAmount
     });
 
+    // Проверяем существование пользователя
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      console.error('❌ Пользователь не найден:', userId);
+      return;
+    }
+
+    console.log('✅ Пользователь найден:', { userId, email: user.email, currentPlan: user.plan });
+
     // Вычисляем дату окончания подписки
     const startDate = new Date();
     const endDate = new Date();
@@ -68,6 +90,17 @@ async function handleSuccessfulPayment(paymentObject: any) {
     } else if (period === 'YEARLY') {
       endDate.setFullYear(endDate.getFullYear() + 1);
     }
+
+    console.log('🔍 Создаем подписку с данными:', {
+      plan,
+      status: 'ACTIVE',
+      amount: paymentAmount,
+      currency: 'RUB',
+      period,
+      startDate,
+      endDate,
+      userId,
+    });
 
     // Создаем запись о подписке
     const subscription = await prisma.subscription.create({
@@ -83,13 +116,21 @@ async function handleSuccessfulPayment(paymentObject: any) {
       },
     });
 
+    console.log('✅ Подписка создана:', subscription.id);
+
     // Обновляем план пользователя
-    await prisma.user.update({
+    const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: {
         plan,
         planExpiresAt: endDate,
       },
+    });
+
+    console.log('✅ Пользователь обновлен:', {
+      userId,
+      newPlan: updatedUser.plan,
+      expiresAt: updatedUser.planExpiresAt
     });
 
     console.log('✅ Подписка активирована:', {

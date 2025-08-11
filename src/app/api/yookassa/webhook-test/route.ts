@@ -23,6 +23,11 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({ 
     message: 'Webhook test endpoint is working',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    instructions: [
+      '1. Скопируйте этот URL: ' + (process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000') + '/api/yookassa/webhook-test',
+      '2. Вставьте его в настройки webhook в личном кабинете ЮKassa',
+      '3. Проверьте, что webhook доходит до сервера'
+    ]
   });
 }

@@ -90,6 +90,12 @@ export default function PaymentSuccessSimplePage() {
               Перейти в панель управления
             </Link>
             <Link
+              href="/manual-activation"
+              className="block w-full text-blue-400 hover:text-blue-300 px-6 py-3 rounded-lg border border-blue-600 hover:border-blue-500 transition-all font-medium"
+            >
+              Диагностика подписки
+            </Link>
+            <Link
               href="/"
               className="block w-full text-gray-300 hover:text-white px-6 py-3 rounded-lg border border-gray-600 hover:border-gray-500 transition-all font-medium"
             >
